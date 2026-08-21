@@ -1,0 +1,121 @@
+/* Stay or Move — 애플닷컴 스타일 디자인 시스템 (여백·대형 타이포·헤어라인, 박스 지양) */
+:root{
+  --bg:#ffffff; --bg-alt:#f5f5f7; --text:#1d1d1f; --text-2:#6e6e73; --text-3:#86868b;
+  --hair:rgba(0,0,0,.11); --accent:#0071e3; --gold:#a6791b; --pos:#0a8f5b; --neg:#c92a3b;
+  --map-bg:#eceef2;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#000000; --bg-alt:#101012; --text:#f5f5f7; --text-2:#a1a1a6; --text-3:#86868b;
+    --hair:rgba(255,255,255,.14); --accent:#2997ff; --gold:#e8b84b; --pos:#41d391; --neg:#ff5c6c;
+    --map-bg:#0b0b0d;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#000000; --bg-alt:#101012; --text:#f5f5f7; --text-2:#a1a1a6; --text-3:#86868b;
+  --hair:rgba(255,255,255,.14); --accent:#2997ff; --gold:#e8b84b; --pos:#41d391; --neg:#ff5c6c;
+  --map-bg:#0b0b0d;
+}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);letter-spacing:-.01em;line-height:1.5;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Apple SD Gothic Neo","Pretendard",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.tnum{font-variant-numeric:tabular-nums}
+.container{max-width:980px;margin:0 auto;padding:0 22px}
+.narrow{max-width:680px;margin:0 auto;padding:0 22px}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.022em;text-wrap:balance}
+.eyebrow{font-size:15px;font-weight:600;color:var(--accent)}
+.muted{color:var(--text-2)}
+
+header{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--bg) 72%,transparent);
+  backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--hair)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:48px;font-size:14px}
+.brand{font-weight:600}.brand .muted{margin:0 2px}
+.nav-right{display:flex;gap:18px;align-items:center;color:var(--text-2)}
+.nav-right button{background:none;border:none;color:inherit;font:inherit;cursor:pointer;padding:0}
+.nav-right button:hover{color:var(--text)}
+.pill{display:inline-flex;align-items:center;justify-content:center;background:var(--accent);color:#fff;
+  border:none;font:inherit;font-weight:500;padding:10px 20px;border-radius:980px;cursor:pointer;font-size:15px;transition:opacity .2s}
+.pill:hover{opacity:.85}.pill:disabled{opacity:.5;cursor:default}
+
+section{padding:88px 0}
+section.alt{background:var(--bg-alt)}
+.hero{padding:76px 0 64px;text-align:center}
+.hero h1{font-size:clamp(38px,6.4vw,74px);line-height:1.05}
+.hero h1 .go{color:var(--gold)}
+.hero .sub{font-size:clamp(18px,2.3vw,25px);color:var(--text-2);margin:18px auto 0;max-width:26ch;font-weight:500}
+.verdict-pill{margin-top:24px;display:inline-flex;gap:8px;font-size:15px;font-weight:600;color:var(--gold);
+  border:1px solid color-mix(in srgb,var(--gold) 45%,transparent);border-radius:980px;padding:8px 18px}
+
+.sec-head{text-align:center;margin-bottom:44px}
+.sec-head h2{font-size:clamp(28px,4.2vw,46px);line-height:1.09}
+.sec-head p{font-size:18px;color:var(--text-2);margin:14px auto 0;max-width:34ch}
+
+.figures{display:grid;grid-template-columns:repeat(3,1fr)}
+.figure{padding:8px 26px;text-align:center;border-left:1px solid var(--hair)}
+.figure:first-child{border-left:0}
+.figure .n{font-size:clamp(36px,5vw,58px);font-weight:600;letter-spacing:-.03em;line-height:1}
+.figure .n.gold{color:var(--gold)}
+.figure .n small{font-size:.4em;font-weight:500;color:var(--text-2)}
+.figure .cap{margin-top:12px;font-size:15px;color:var(--text-2)}
+.figure .note{margin-top:4px;font-size:13px;color:var(--text-3)}
+
+.map{aspect-ratio:16/9;background:var(--map-bg);border-radius:18px;overflow:hidden}
+.map-cap{margin-top:18px;text-align:center;font-size:15px;color:var(--text-2)}
+
+.stable{width:100%;border-collapse:collapse;font-size:17px}
+.stable th,.stable td{padding:16px 8px;text-align:right;border-bottom:1px solid var(--hair)}
+.stable th:first-child,.stable td:first-child{text-align:left}
+.stable thead th{font-size:13px;color:var(--text-3);font-weight:500}
+.stable tbody tr:last-child td{border-bottom:0}
+.stable .best td{color:var(--gold);font-weight:600}
+
+.cands{display:grid;grid-template-columns:repeat(3,1fr)}
+.cand{padding:0 28px;border-left:1px solid var(--hair);text-align:center}
+.cand:first-child{border-left:0}
+.cand .cid{font-size:13px;color:var(--text-3)}
+.cand .cname{font-size:19px;font-weight:600;margin:6px 0 16px;min-height:2.6em;display:flex;align-items:center;justify-content:center}
+.cand .score{font-size:54px;font-weight:600;letter-spacing:-.03em;line-height:1}
+.cand .score small{font-size:.32em;color:var(--text-3);font-weight:500}
+.cand.win .score{color:var(--gold)}
+.cand .crown{font-size:20px;height:24px}
+.cand .rows{margin-top:20px;text-align:left}
+.cand .r{display:flex;justify-content:space-between;font-size:14px;color:var(--text-2);padding:9px 0;border-top:1px solid var(--hair)}
+.cand .r b{color:var(--text);font-weight:600}
+
+.ai p{font-size:20px;line-height:1.62;margin:0 0 24px}
+.ai p .q{color:var(--text-2)}
+.ai .src{display:flex;flex-wrap:wrap;gap:10px 26px;justify-content:center;font-size:14px;color:var(--text-2)}
+.ai .src b{color:var(--text)}
+.disclaimer{text-align:center;font-size:13px;color:var(--text-3);max-width:60ch;margin:26px auto 0}
+
+/* 입력 폼 — 박스 없이 헤어라인 구분, 애플식 정갈한 필드 */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.form-col{padding:0 40px}
+.form-col:first-child{border-right:1px solid var(--hair);padding-left:0}
+.form-col:last-child{padding-right:0}
+.form-col h3{font-size:20px;margin-bottom:6px}
+.form-col .step{font-size:13px;color:var(--text-3);margin-bottom:22px}
+.field{display:block;margin-bottom:18px}
+.field span{display:block;font-size:14px;color:var(--text-2);margin-bottom:6px}
+.input{width:100%;padding:11px 14px;border:1px solid var(--hair);border-radius:12px;background:var(--bg);
+  color:var(--text);font:inherit;font-size:15px}
+.input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+textarea.input{resize:vertical;min-height:64px}
+.cand-input{padding:16px 0;border-top:1px solid var(--hair);display:flex;gap:14px;align-items:flex-start}
+.cand-input:first-of-type{border-top:0}
+.cand-input .badge{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:600;font-size:13px;color:#fff;flex:0 0 auto;margin-top:26px}
+.num-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+
+footer{padding:40px 0;border-top:1px solid var(--hair);font-size:12px;color:var(--text-3);text-align:center}
+
+@media (max-width:740px){
+  section{padding:60px 0}
+  .figures,.cands,.form-grid{grid-template-columns:1fr}
+  .figure,.cand{border-left:0;border-top:1px solid var(--hair);padding:28px 0}
+  .figure:first-child,.cand:first-child{border-top:0}
+  .cand .cname{min-height:0}
+  .form-col{padding:0}.form-col:first-child{border-right:0;border-bottom:1px solid var(--hair);padding-bottom:28px;margin-bottom:28px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
