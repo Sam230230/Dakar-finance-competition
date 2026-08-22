@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from crew import RelocationCrew
 from geo.naver_geocode import geocode, GeocodeError
 from data_sources.sosangong import stores_in_radius, SosangongError
+from data_sources.sanggwon_trend import trend_for_coords, SanggwonTrendError
 import staymove
 
 app = FastAPI(title="상권 이전 컨설팅 API", version="1.0.0")
@@ -170,6 +171,51 @@ def competitors(req: CompetitorRequest):
         total_count=res.total_count,
         stores=[{"name": s.name, "lat": s.lat, "lng": s.lng, "inds_small": s.inds_small}
                 for s in res.stores if s.lat and s.lng],
+    )
+
+
+# ── 상권변화지표(서울시 정형 데이터) — 젠트리피케이션 관련 '근거', 예측 아님 ──
+class TrendRequest(BaseModel):
+    lat: float
+    lng: float
+
+
+class TrendResponse(BaseModel):
+    available: bool
+    trdar_cd: Optional[str] = None
+    trdar_nm: Optional[str] = None
+    matched_inside_polygon: Optional[bool] = None   # False면 최근접 상권으로 폴백된 것
+    fallback_distance_m: Optional[float] = None
+    std_yy: Optional[str] = None
+    change_grade: Optional[str] = None
+    grade_label: Optional[str] = None
+    note: str = ""
+
+
+@app.post("/trend", response_model=TrendResponse)
+def trend(req: TrendRequest):
+    """좌표 → 상권코드 조인 → 서울시 상권변화지표(정형 등급) 조회.
+    스크래핑·LLM 추정이 아니라 서울시가 이미 분류해 둔 등급을 그대로 전달한다.
+    상권 폴리곤/API 키가 준비 안 됐거나 데이터가 없으면 available=false 로 정직하게 응답."""
+    try:
+        t, match = trend_for_coords(req.lat, req.lng)
+    except (SanggwonTrendError, FileNotFoundError) as e:
+        return TrendResponse(available=False, note=str(e))
+    if t is None:
+        return TrendResponse(
+            available=False,
+            trdar_cd=match.trdar_cd, trdar_nm=match.trdar_nm,
+            matched_inside_polygon=match.matched,
+            fallback_distance_m=match.distance_m or None,
+            note=match.note or "해당 상권의 변화지표 데이터가 없습니다.",
+        )
+    return TrendResponse(
+        available=True,
+        trdar_cd=t.trdar_cd, trdar_nm=t.trdar_nm,
+        matched_inside_polygon=match.matched,
+        fallback_distance_m=match.distance_m or None,
+        std_yy=t.std_yy, change_grade=t.change_grade, grade_label=t.grade_label,
+        note=match.note,
     )
 
 

@@ -84,6 +84,7 @@ relocation_helper/
 | POST | /geocode | 주소 목록 → 좌표(네이버) |
 | POST | /competitors | 좌표 반경 내 (동종)업소 조회(소진공) |
 | POST | /staymove | **핵심**: 후보별 손익·회수 계산 + 순위 + AI 자연어 설명 (explain=false 면 계산만) |
+| POST | /trend | 좌표 → 상권코드 조인 → 서울시 상권변화지표(정형 등급) 조회. 젠트리피케이션 관련 '근거' — 예측·점수화 없음. 폴리곤 GeoJSON+API키 미설정 시 `available:false`로 정직하게 응답 |
 | POST | /relocate | (구버전) CrewAI 4-에이전트 자연어 리포트 |
 
 ## 결과 지도 (추천지 강조)
@@ -102,6 +103,18 @@ CSV·계약조건 ─ rule_engine → Stay/Move 숫자(확정 계산)
         └→ 결과 화면 지도에 추천지 강조 표시
 ```
 
+## 상권변화지표(젠트리피케이션 근거) — 설계 원칙
+`geo/sanggwon_join.py`(좌표→상권코드 공간조인)와 `data_sources/sanggwon_trend.py`(상권코드→
+서울시 상권변화지표 조회)를 연결해 `/trend` 엔드포인트로 노출한다.
+
+- 웹 스크래핑이나 LLM 추정으로 "이 동네 젠트리피케이션 가능성"을 새로 만들지 않는다.
+- 서울시가 이미 정형 데이터로 분류해 둔 등급(HH/HL/LH/LL — 생존율×폐업율 2x2)만 그대로 인용한다.
+- `explainer` 에이전트는 이 등급을 '설명'만 하고, 여기서 새로운 위험도 점수나 미래 예측을 만들지 않는다.
+- `data/sanggwon.geojson`(서울시 영역-상권 SHP→GeoJSON 변환본)과 `SEOUL_OPENAPI_KEY`가 없으면
+  `/trend`는 500 대신 `available:false`로 정직하게 응답한다(전체 파이프라인을 막지 않음).
+- 실제 오퍼레이션명(`SANGGWON_TREND_OPERATION`)과 등급 필드명은 배포 전 서울 열린데이터광장
+  OA-15576 스펙으로 최종 확인 필요(코드 내 주석 참고).
+
 ## 다음 단계 (선택)
-- 좌표 → 서울시 상권코드(영역-상권) 공간조인(GeoPandas)으로 추정매출·유동인구 근거 보강.
+- `data/sanggwon.geojson` 확보 + `/trend`를 프론트 결과 화면의 상권 근거 카드에 연결.
 - rule_engine 출력을 CrewAI `consulting_reporter` context 로 연결(숫자→자연어).

@@ -3,19 +3,22 @@ Stay or Move 오케스트레이터 — 규칙엔진(계산) + 채점/순위 + Cr
 
 흐름:
     현재매장 + 후보 계약조건
-      → rule_engine.compute() 로 후보별 경제성 계산 (결정론)
-      → 경제성 채점·순위 → 추천 후보 결정 (결정론)
+      → rule_engine.compute() 로 후보별 경제성 계산 (결정론, 임계값형만 — 예측형 지표 없음)
+      → 경제성 채점·순위 → 상위 후보 결정 (결정론)
       → facts(JSON) 구성
-      → CrewAI explainer 가 그 숫자를 '설명만' (LLM은 계산 안 함)
+      → CrewAI explainer 가 그 숫자를 '설명만' (LLM은 계산도, 최종 추천도 하지 않는다)
 
 `analyze()` 까지는 OpenAI 키 없이 동작(테스트 가능).
 `run(..., explain=True)` 에서만 CrewAI/LLM 호출.
+
+주의: 여기서 나오는 `decision`/순위는 "추천"이 아니라 사용자가 스스로 판단할 수 있게
+현재 확보된 숫자를 기준으로 분류한 "판정 결과"다. 최종 결정은 사용자의 몫이며,
+설명(explainer)도 이를 '추천'이 아닌 '판단 근거 제시'로 서술해야 한다.
 """
 from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict
 from typing import List, Optional
 
 try:
@@ -37,6 +40,7 @@ class CurrentStoreIn(BaseModel):
     variable_cost: float
     fixed_cost: float
     deposit: float = 0.0
+    available_cash: float = 0.0      # 보유 가용현금 (사용자 입력)
 
 
 class CandidateIn(BaseModel):
@@ -46,8 +50,10 @@ class CandidateIn(BaseModel):
     maintenance_fee: float = 0.0
     other_fixed_cost: float = 0.0    # 인건비 등 새 매장에서 발생할 고정비
     deposit: float = 0.0
+    key_money: float = 0.0           # 권리금 (사용자 입력 필수 — 공공데이터 없음)
     interior_cost: float = 0.0
     moving_cost: float = 0.0
+    restoration_cost: float = 0.0    # 원상복구비 (사용자 입력 필수 — 공공데이터 없음)
     other_moving_cost: float = 0.0
     closed_days: int = 0
 
@@ -60,21 +66,19 @@ class StayMoveIn(BaseModel):
 
 # =====================================================================
 #  채점 (경제성 기반, 투명·설명가능)
+#  ※ 미래 매출 유지를 가정하는 예측형 지표(회수기간 시나리오 등)는
+#    순위/추천에 영향을 주지 않도록 배제한다 — 현재 확정된 숫자(필요 유지율)만 사용.
 # =====================================================================
 def _clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
 
 def _economic_score(res: StayMoveResult) -> dict:
-    """필요 유지율(낮을수록↑)과 95% 시나리오 회수기간(짧을수록↑)으로 0~100 채점."""
+    """필요 유지율만으로 0~100점 채점 (낮을수록 유리).
+    0.70 이하 → 100점, 1.30 이상 → 0점, 선형 보간."""
     rr = res.required_retention
-    # 유지율 성분 0~60: 0.70 → 60점, 1.30 → 0점
-    ret = _clamp((1.30 - rr) / (1.30 - 0.70) * 60, 0, 60) if rr == rr else 0
-    # 회수 성분 0~40: 95% 유지 시나리오의 회수기간 12개월→40, 48개월→0
-    sc = next((s for s in res.payback_scenarios if abs(s.retention - 0.95) < 1e-9), None)
-    pm = sc.payback_months if sc else None
-    pay = 0 if pm is None else _clamp((48 - pm) / (48 - 12) * 40, 0, 40)
-    return {"total": round(ret + pay), "retention_pts": round(ret), "payback_pts": round(pay)}
+    score = _clamp((1.30 - rr) / (1.30 - 0.70) * 100, 0, 100) if rr == rr else 0
+    return {"total": round(score), "retention_pts": round(score)}
 
 
 def analyze(payload: dict) -> dict:
@@ -85,14 +89,16 @@ def analyze(payload: dict) -> dict:
         variable_cost=data.current.variable_cost,
         fixed_cost=data.current.fixed_cost,
         deposit=data.current.deposit,
+        available_cash=data.current.available_cash,
     )
     ranked = []
     for c in data.candidates:
         cand = CandidateStore(
             name=c.name, monthly_rent=c.monthly_rent, maintenance_fee=c.maintenance_fee,
             other_fixed_cost=c.other_fixed_cost, deposit=c.deposit,
-            interior_cost=c.interior_cost, moving_cost=c.moving_cost,
-            other_moving_cost=c.other_moving_cost, closed_days=c.closed_days,
+            key_money=c.key_money, interior_cost=c.interior_cost, moving_cost=c.moving_cost,
+            restoration_cost=c.restoration_cost, other_moving_cost=c.other_moving_cost,
+            closed_days=c.closed_days,
         )
         res = compute(cur, cand)
         score = _economic_score(res)
@@ -101,43 +107,46 @@ def analyze(payload: dict) -> dict:
             "score": score["total"], "score_detail": score,
             "min_required_sales": round(res.min_required_sales),
             "required_retention": round(res.required_retention, 4),
-            "initial_capital": round(res.initial_relocation_capital),
+            "additional_capital_needed": round(res.initial_relocation_capital),
+            "cash_shortfall_or_surplus": round(res.cash_shortfall_or_surplus),
             "actual_relocation_cost": round(res.actual_relocation_cost),
-            "scenarios": [
-                {"retention": s.retention,
-                 "monthly_gain": round(s.monthly_gain) if s.monthly_gain == s.monthly_gain else None,
-                 "payback_months": round(s.payback_months, 1) if s.payback_months else None}
-                for s in res.payback_scenarios
-            ],
+            "target_period_required_sales": {
+                str(m): round(s) for m, s in res.target_period_required_sales.items()
+            },
             "warnings": res.warnings,
         })
 
     # 점수 내림차순, 동점이면 필요 유지율 낮은 쪽
     ranked.sort(key=lambda r: (-r["score"], r["required_retention"]))
-    recommended = ranked[0]["site_id"]
+    top_site_id = ranked[0]["site_id"]
 
-    # 판정: 추천 후보의 유지율로 결정
+    # 판정: 최상위 후보의 필요 유지율 기준 3단계 분류.
+    # "추천"이 아니라 사용자가 상황을 가늠할 수 있게 돕는 판정 라벨.
     top = ranked[0]
     rr = top["required_retention"]
     if rr <= 0.90:
-        decision = "immediate"      # 즉시 이전 권장
+        decision = "immediate"      # 여유 있음: 매출이 다소 떨어져도 이전이 유리
+        decision_label = "여유 있음"
     elif rr <= 1.00:
-        decision = "conditional"    # 조건부 권장
+        decision = "conditional"    # 빠듯함: 현재 매출을 거의 그대로 유지해야 함
+        decision_label = "빠듯함"
     else:
-        decision = "reconsider"     # 재검토 권고
+        decision = "reconsider"     # 재검토 필요: 현재보다 매출이 더 필요함
+        decision_label = "재검토 필요"
 
     return {
         "business_name": data.business_name,
         "current_operating_profit": round(cur.operating_profit),
         "contribution_margin_rate": round(cur.contribution_margin_rate, 4),
-        "recommended": recommended,
+        "top_site_id": top_site_id,
         "decision": decision,
+        "decision_label": decision_label,
         "ranking": ranked,
     }
 
 
 # =====================================================================
-#  CrewAI 설명 (LLM은 '설명만')
+#  CrewAI 설명 (LLM은 '설명만', 최종 추천 문구도 만들지 않음)
 # =====================================================================
 def _explain_with_crew(facts: dict) -> str:
     from crewai import Agent, Crew, Process, Task
@@ -164,7 +173,7 @@ def _explain_with_crew(facts: dict) -> str:
 
     inputs = {
         "business_name": facts["business_name"],
-        "recommended": facts["recommended"],
+        "top_site_id": facts["top_site_id"],
         "facts_json": json.dumps(facts, ensure_ascii=False, indent=2),
     }
     result = StayMoveExplainerCrew().crew().kickoff(inputs=inputs)
@@ -172,20 +181,20 @@ def _explain_with_crew(facts: dict) -> str:
 
 
 def _fallback_explanation(facts: dict) -> str:
-    """LLM 없이도 숫자로 만드는 결정론 설명(AI 설명이 실패할 때 대체)."""
+    """LLM 없이도 숫자로 만드는 결정론 설명(AI 설명이 실패할 때 대체).
+    '추천한다'는 문구 대신 판단 근거를 제시하는 톤으로 서술."""
     rank = facts["ranking"]
     top = rank[0]
-    dec = {"immediate": "이전을 권장", "conditional": "조건부로 이전을 권장",
-           "reconsider": "재검토를 권고"}.get(facts["decision"], "검토")
+    label = facts["decision_label"]
     lines = [
-        f"{top['site_id']}({top['name']})로 {dec}합니다. "
-        f"현재 수익을 유지하려면 새 매장에서 월 {top['min_required_sales']:,}만원(현재 매출의 "
-        f"{top['required_retention']*100:.1f}%)을 팔면 됩니다. 초기 이전 자금은 약 "
-        f"{top['initial_capital']:,}만원입니다.",
+        f"{top['site_id']}({top['name']})의 판정은 '{label}'입니다. "
+        f"현재 수익을 유지하려면 새 매장에서 월 {top['min_required_sales']:,}원(현재 매출의 "
+        f"{top['required_retention']*100:.1f}%)을 팔아야 합니다. 추가로 필요한 이전 자금은 약 "
+        f"{top['additional_capital_needed']:,}원(보유 가용현금 반영)입니다.",
     ]
     if len(rank) > 1:
         others = ", ".join(f"{r['site_id']}(유지율 {r['required_retention']*100:.0f}%)" for r in rank[1:])
-        lines.append(f"차순위 후보는 {others} 순입니다.")
+        lines.append(f"다른 후보는 {others} 순입니다.")
     lines.append("※ 매출 수치는 거래내역 기반 계산값입니다. (AI 자연어 설명은 현재 사용 불가 — 아래 사유 참고)")
     return "\n\n".join(lines)
 
@@ -204,18 +213,25 @@ def run(payload: dict, explain: bool = True) -> dict:
 
 
 # =====================================================================
-#  데모
+#  데모 (단위: 원)
 # =====================================================================
 DEMO_PAYLOAD = {
     "business_name": "아무개 커피",
-    "current": {"monthly_sales": 2800, "variable_cost": 1120, "fixed_cost": 930, "deposit": 2000},
+    "current": {"monthly_sales": 28_000_000, "variable_cost": 11_200_000,
+                "fixed_cost": 9_300_000, "deposit": 20_000_000, "available_cash": 10_000_000},
     "candidates": [
-        {"site_id": "A", "name": "성수동 카페거리 1층", "monthly_rent": 450, "maintenance_fee": 30,
-         "other_fixed_cost": 450, "deposit": 3000, "interior_cost": 2500, "moving_cost": 500, "closed_days": 15},
-        {"site_id": "B", "name": "망원동 주택가 코너 1층", "monthly_rent": 250, "maintenance_fee": 20,
-         "other_fixed_cost": 450, "deposit": 3000, "interior_cost": 2500, "moving_cost": 500, "closed_days": 15},
-        {"site_id": "C", "name": "여의도 오피스가 지하1층", "monthly_rent": 350, "maintenance_fee": 40,
-         "other_fixed_cost": 450, "deposit": 2500, "interior_cost": 2000, "moving_cost": 500, "closed_days": 15},
+        {"site_id": "A", "name": "성수동 카페거리 1층", "monthly_rent": 4_500_000, "maintenance_fee": 300_000,
+         "other_fixed_cost": 4_500_000, "deposit": 30_000_000, "key_money": 45_000_000,
+         "interior_cost": 25_000_000, "moving_cost": 5_000_000, "restoration_cost": 6_000_000,
+         "closed_days": 15},
+        {"site_id": "B", "name": "망원동 주택가 코너 1층", "monthly_rent": 2_500_000, "maintenance_fee": 200_000,
+         "other_fixed_cost": 4_500_000, "deposit": 30_000_000, "key_money": 20_000_000,
+         "interior_cost": 25_000_000, "moving_cost": 5_000_000, "restoration_cost": 6_000_000,
+         "closed_days": 15},
+        {"site_id": "C", "name": "여의도 오피스가 지하1층", "monthly_rent": 3_500_000, "maintenance_fee": 400_000,
+         "other_fixed_cost": 4_500_000, "deposit": 25_000_000, "key_money": 30_000_000,
+         "interior_cost": 20_000_000, "moving_cost": 5_000_000, "restoration_cost": 6_000_000,
+         "closed_days": 15},
     ],
 }
 
@@ -224,10 +240,11 @@ if __name__ == "__main__":
     import sys
     do_llm = "--explain" in sys.argv  # 기본은 계산만(무료). --explain 붙이면 LLM 호출.
     out = run(DEMO_PAYLOAD, explain=do_llm)
-    print(f"추천: {out['recommended']} · 판정: {out['decision']}")
+    print(f"1순위: {out['top_site_id']} · 판정: {out['decision_label']}")
     print("순위:")
     for r in out["ranking"]:
-        print(f"  {r['site_id']} {r['name']}: {r['score']}점 · 최소필요 {r['min_required_sales']}만 "
-              f"· 유지율 {r['required_retention']*100:.1f}%")
+        print(f"  {r['site_id']} {r['name']}: {r['score']}점 · 최소필요 {r['min_required_sales']:,}원 "
+              f"· 유지율 {r['required_retention']*100:.1f}% "
+              f"· 추가필요자금 {r['additional_capital_needed']:,}원")
     if "explanation_markdown" in out:
         print("\n── AI 설명 ──\n" + out["explanation_markdown"])
