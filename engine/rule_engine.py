@@ -55,7 +55,9 @@ class CandidateStore:
     other_fixed_cost: float = 0.0 # 인건비 등 후보 매장에서 달라지는 고정비(선택)
     deposit: float = 0.0          # 후보 보증금
     interior_cost: float = 0.0    # 인테리어비
-    moving_cost: float = 0.0      # 이사·철거비
+    moving_cost: float = 0.0      # 이사비
+    restoration_cost: float = 0.0 # 기존 점포 원상회복비
+    rights_fee: float = 0.0        # 신규 점포 권리금
     other_moving_cost: float = 0.0# 기타 이전비
     closed_days: int = 0          # 예상 휴업일수
 
@@ -152,8 +154,10 @@ def compute(
     # ── STEP 4-4. 초기 이전 자금 ──
     #  보증금은 '비용'이 아니라 묶이는 자금 → 추가 보증금만 자금 소요로 반영
     net_deposit_change = candidate.deposit - current.deposit
-    #  회수 대상 '실제 이전비용'은 보증금 제외(인테리어+이사+기타+휴업손실)
+    #  회수 대상 '실제 이전비용'은 보증금 제외
+    #  최종 기획안: 인테리어 + 이사 + 원상회복 + 권리금 + 기타 + 휴업손실
     actual_relocation_cost = (candidate.interior_cost + candidate.moving_cost
+                              + candidate.restoration_cost + candidate.rights_fee
                               + candidate.other_moving_cost + closure_loss)
     #  화면 카드 ③ '초기 이전 자금' = 추가로 필요한 현금 = 실제이전비용 + 추가보증금
     initial_relocation_capital = actual_relocation_cost + max(0.0, net_deposit_change)

@@ -6,3 +6,10 @@ pydantic>=2.6.0
 python-dotenv>=1.0.0
 shapely>=2.0.0          # 좌표→상권코드 공간조인 (geo/sanggwon_join.py)
 # geopandas>=0.14.0     # (선택) SHP를 직접 읽을 때. GeoJSON만 쓰면 shapely로 충분
+
+# 정책자금 RAG
+sentence-transformers>=3.0.0
+faiss-cpu>=1.8.0
+numpy>=1.26.0
+requests>=2.31.0
+pypdf>=4.0.0

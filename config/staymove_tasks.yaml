@@ -1,23 +1,57 @@
 explain_task:
   description: >
-    아래는 이미 계산이 끝난 매장 이전 경제성 데이터(JSON)입니다.
-    {business_name} 사장님이 스스로 Stay or Move를 판단할 수 있도록 설명하세요.
+    아래는 후보 {candidate_id}({candidate_region}) 1곳에 대해서만 계산·검색이
+    끝난 데이터입니다. 다른 후보의 데이터는 이 태스크에 전달되지 않았으니
+    존재한다고 가정하지 마세요.
 
-    <계산결과>
-    {facts_json}
-    </계산결과>
+    {business_name} 사장님({industry})의 {relocation_type} 이전 상황입니다.
+    {comparison_context}
 
-    [리포트 구성]
-    1. 핵심 판단조건: 현재 수익을 유지하기 위한 최소 필요매출과 필요 매출 유지율.
-    2. 목표기간: 12/24/36개월 내 이전비 회수에 필요한 월매출을 설명.
-    3. 회수기간: 90/95/100% 매출 유지 시 회수 가능 여부와 기간을 설명.
-    4. 초기 이전자금: 추가로 묶이는 보증금과 실제 소모되는 이전비를 구분.
-    5. 후보가 여러 개면 숫자를 나란히 비교하되 자동 순위나 추천을 만들지 말 것.
+    <Rule Engine 계산 결과 — 절대 재계산·수정 금지>
+    {rule_engine_block}
 
-    [준수 규칙]
-    - 계산결과에 없는 숫자를 만들지 말 것.
-    - '이전 추천', '즉시 이전 권장', '최적 후보' 같은 표현 금지.
-    - 상권 지표가 없는 경우 상권이 좋다/나쁘다고 추정하지 말 것.
+    <검색된 정책금융 (이 후보 지역 기준, 이 목록 밖의 정책은 존재하지 않는다고 간주)>
+    {policy_context_block}
+
+    <참고: 반드시 반영해야 할 확인사항 후보 — 누락하지 말고 위 정책과 연결해 설명>
+    {deterministic_checks_block}
+
+    [작성 규칙]
+    1. financial_summary.summary: 이 후보의 재무 부담(추가 필요 이전자금, 필요 매출
+       유지율)을 2~3문장으로 설명. additional_fund_needed/required_retention 필드에는
+       위 Rule Engine 블록의 값을 그대로 옮겨 적을 것(재계산 금지).
+    2. policy_summary: 위 "검색된 정책금융" 목록에 있는 정책만, 최대 5개까지 사용.
+       policy_name은 목록의 이름을 그대로 사용(줄임/의역 금지). why_relevant는 이 후보의
+       재무 상황과 왜 관련 있는지, key_condition은 업력/한도/금리 등 핵심 조건,
+       caution은 자격 추가 확인·출처 확인·신청상태 등 주의사항을 담을 것.
+    3. candidate_interpretation: 4~7문장. {narrative_stance}
+    4. important_checks: 위 "확인사항 후보"를 우선 반영하고, 제공된 데이터에서
+       명확히 근거가 있는 추가 확인사항만 덧붙일 것(추측 금지).
+
+    [절대 금지]
+    - 위에 없는 정책명·금리·한도·조건을 새로 만들지 말 것.
+    - "지원받을 수 있습니다", "신청 가능합니다", "이전비를 해결할 수 있습니다" 등 확정 표현 금지.
+    - Stay 또는 Move 중 하나를 최종 추천하지 말 것.
   expected_output: >
-    3~5개 짧은 문단으로 된 자연어 분석 설명.
+    candidate_id, candidate_region, financial_summary(additional_fund_needed,
+    required_retention, summary), policy_summary(policy_name, region_slot,
+    why_relevant, key_condition, caution, source_url 목록), candidate_interpretation,
+    important_checks(목록)로 구성된 구조화 결과.
+  agent: explainer
+
+comparison_task:
+  description: >
+    아래는 이미 후보별로 생성된 근거 기반 설명 요약입니다(각 후보의 재무 요약과
+    핵심 확인사항). 새로운 정책을 검색하거나 추정하지 말고, 아래 요약에 있는
+    내용만으로 후보 간 차이를 비교하세요.
+
+    <후보별 요약>
+    {candidate_summaries_block}
+
+    [작성 규칙]
+    - 후보들의 재무 부담과 정책 활용 조건의 "차이"를 3~5문장으로 서술.
+    - 종합점수, 순위, "가장 좋은 후보", "추천 후보" 같은 표현을 쓰지 말 것.
+    - 각 후보의 실제 요약에 있는 내용만 인용할 것.
+  expected_output: >
+    comparison_text 한 필드로 구성된 구조화 결과(3~5문장, 순위 없음).
   agent: explainer

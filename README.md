@@ -1,50 +1,132 @@
-# Stay or Move
+# Stay or Move — Final Merge MVP
 
-서울 소상공인의 현재 매장과 후보 매장을 지도에서 비교하고, 현재 손익·후보 계약조건·서울시 상권 데이터를 결합해 이전 경제성 조건을 보여주는 MVP입니다.
+최종 기획안 기준으로 기존 Figma형 화면/Rule Engine 프로젝트와 정책금융 RAG 프로젝트를 합친 버전입니다.
 
-## 현재 구조
+## 핵심 사용자 흐름
 
-- NAVER Web Dynamic Map: 지도 표시, 현재 + 후보 A/B/C 마커
-- NAVER Geocoding: 도로명 주소 → 좌표 (키가 없으면 제공된 데모 주소 4곳은 로컬 좌표로 폴백)
-- 서울시 영역-상권 GeoJSON: 좌표 → `TRDAR_CD` + 상권 경계
-- SQLite `data/seoul_market.sqlite`: 추정매출 YoY, 폐업률, 상권변화지표 빠른 조회
-- Rule Engine: 필요 매출 유지율, 목표 회수기간별 필요매출, 회수기간, 초기 이전자금
-- OpenAI: 선택사항. 키가 없으면 규칙 기반 문장으로 데모 동작
+첫 질문은 사용자가 `자발적/비자발적`이라는 용어를 고르게 하지 않습니다.
 
-## 1. 환경변수
+> 현재 매장에서 계속 영업할 수 있나요?
 
-```bash
-cp .env.example .env
+- YES → **자발적 이전** → `현재 점포 Stay vs 후보지 Move`
+- NO → **비자발적 이전** → `후보 A vs 후보 B vs 후보 C`
+  - 현재 점포는 선택지가 아니라 기존 영업실적의 기준점으로만 사용
+
+## 통합된 계산/검색 흐름
+
+```text
+사용자 입력
+  ↓
+Rule Engine
+  ├─ 최소 필요 월매출
+  ├─ 필요 매출 유지율
+  ├─ 실제 이전비용
+  ├─ 초기 이전 소요자금
+  └─ 추가 필요 이전자금
+        ↓
+후보 주소 → 서울 자치구
+        ↓
+정책금융 RAG
+  ├─ 해당 자치구
+  ├─ 서울 공통
+  └─ 전국 공통
+        ↓
+Dashboard / 조건부 판단 근거
 ```
 
-`.env`에서 NAVER만 입력하면 지도/주소검색을 사용할 수 있습니다.
+정책금융은 `추가 필요 이전자금`에서 지원한도를 자동 차감하지 않습니다. 검색된 정책은 실제 승인/지원 확정을 의미하지 않습니다.
 
-```env
-DEMO_MODE=true
-VITE_DEMO_MODE=true
-NCP_APIGW_KEY_ID=YOUR_CLIENT_ID
-NCP_APIGW_KEY=YOUR_CLIENT_SECRET
-VITE_NCP_MAP_KEY_ID=YOUR_CLIENT_ID
+## 금액 단위
+
+프론트/Rule Engine 입력은 **만원**입니다.
+
+RAG에 전달할 때만:
+
+```python
+additional_fund_needed_krw = additional_fund_needed * 10_000
 ```
 
-NAVER Cloud Application에서 다음을 확인합니다.
+으로 원 단위로 변환합니다.
 
-- Web Dynamic Map 활성화
-- Geocoding 활성화 (주소 검색용)
-- Web 서비스 URL: `http://localhost` (포트 번호 제외)
+## 주요 변경점
 
-`.env`를 수정한 뒤에는 Vite 개발 서버를 반드시 재시작해야 합니다.
+- 온보딩: 자발/비자발 이전 분기
+- 자발적: Stay vs Move 프레이밍
+- 비자발적: Move vs Move 프레이밍
+- 현재 입력에 `보유 가용현금` 추가
+- 후보 입력에 `원상회복비`, `권리금`, `기타 이전비`, `목표 회수기간` 추가
+- 실제 이전비 공식: 인테리어 + 이사 + 원상회복 + 권리금 + 기타 + 휴업손실
+- 추가 필요 이전자금 계산 후 정책 RAG에 전달
+- 기존 607-vector FAISS 정책 DB 포함
+- 결과 화면에 정책금융 섹션 추가
 
-## 2. 실행
+## 프로젝트 구조
 
-백엔드:
+```text
+Stay_or_Move_merged/
+├── api/
+├── engine/
+├── geo/
+├── data_sources/
+├── data/
+├── policy_rag/
+│   ├── src/
+│   │   ├── retrieve.py
+│   │   └── ...
+│   ├── vector_db/
+│   │   ├── policy.index
+│   │   └── metadata.json
+│   └── data/
+├── web/
+├── staymove.py
+├── integration_test.py
+└── requirements.txt
+```
+
+## 1. Python 설치
 
 ```bash
-python -m pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+`sentence-transformers` 모델은 첫 RAG 실행 시 Hugging Face에서 다운로드될 수 있습니다.
+
+## 2. 터미널 통합 확인
+
+Rule Engine 연결만 빠르게 확인:
+
+```bash
+python3 integration_test.py --no-rag
+```
+
+Rule Engine + 실제 정책 RAG까지 확인:
+
+```bash
+python3 integration_test.py
+```
+
+이 테스트는 두 경우를 모두 출력합니다.
+
+- A. 자발적 이전: Stay vs Move
+- B. 비자발적 이전: Move vs Move
+
+## 3. 백엔드 실행
+
+```bash
 uvicorn api.main:app --reload --port 8001
 ```
 
-프론트:
+`POST /staymove`는 기본적으로 Rule Engine + RAG를 실행합니다.
+
+RAG 없이 Rule만 빠르게 확인하려면:
+
+```text
+POST /staymove?explain=false&use_rag=false
+```
+
+## 4. 프론트 실행
 
 ```bash
 cd web
@@ -54,45 +136,12 @@ npm run dev
 
 브라우저: `http://localhost:5173`
 
-## 3. API 키 없이 데모
+기존 화면의 디자인 언어를 유지하면서 첫 온보딩과 정책금융 결과 섹션만 추가했습니다.
 
-상단 `데모 불러오기`를 누르면 미리 정의된 4개 위치와 계약조건을 불러옵니다.
+## 환경변수
 
-- 서울시 Open API 키: 필요 없음 (로컬 DB 사용)
-- OpenAI API 키: 필요 없음 (rule-based demo 설명)
-- NAVER Geocoding 키: 데모 주소 4곳은 없어도 좌표 폴백 가능
-- NAVER Web Dynamic Map Client ID: 실제 네이버 지도를 화면에 띄우려면 필요
-
-지도에서 위치 항목을 먼저 선택한 뒤 직접 클릭하면, Geocoding 없이도 좌표 → 서울시 상권코드/경계를 지정할 수 있습니다.
-
-## 4. 데이터 흐름
-
-```text
-주소 검색 ──NAVER Geocoding──> 좌표
-                               │
-지도 클릭 ─────────────────────┘
-                               ↓
-                      서울시 영역-상권 GeoJSON
-                               ↓
-                           TRDAR_CD
-                               ↓
-                       seoul_market.sqlite
-                        ↙        ↓        ↘
-                   매출 YoY    폐업률    상권변화
-                               +
-                    현재손익 / 후보계약조건
-                               ↓
-                         Rule Engine
-                               ↓
-                           Dashboard
+```bash
+cp .env.example .env
 ```
 
-## 5. 핵심 엔드포인트
-
-- `GET /health`
-- `GET /demo-locations`
-- `POST /commercial-area` — 주소 → 좌표 → 상권
-- `POST /commercial-area/by-point` — 지도 클릭 좌표 → 상권
-- `POST /market-context` — 상권코드 + 업종 → 서울시 지표
-- `POST /staymove` — 경제성 계산
-
+NAVER 지도/주소 검색은 기존 환경변수를 그대로 사용합니다. OpenAI는 선택사항입니다. 정책 RAG 검색 자체는 OpenAI API를 사용하지 않습니다.

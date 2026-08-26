@@ -8,7 +8,9 @@ FastAPI 백엔드 — crew.py 를 감싼 얇은 API 래퍼.
 from __future__ import annotations
 
 from typing import Any, List, Optional
+import logging
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()  # relocation_helper/.env 를 프로세스 환경으로 로드 (OPENAI/NCP/소진공 키)
@@ -112,18 +114,24 @@ def health():
         "demo_mode": os.getenv("DEMO_MODE", "true").lower() != "false",
         "naver_geocode_key": bool(os.getenv("NCP_APIGW_KEY_ID") and os.getenv("NCP_APIGW_KEY")),
         "openai_key": bool(os.getenv("OPENAI_API_KEY")),
+        "policy_rag_index": (Path(__file__).resolve().parents[1] / "policy_rag" / "vector_db" / "policy.index").exists(),
     }
 
 
 # ── Stay or Move: 계산 + 자연어 설명 (핵심 엔드포인트) ──
 @app.post("/staymove")
-def staymove_endpoint(payload: dict, explain: bool = True):
+def staymove_endpoint(payload: dict, explain: bool = True, use_rag: bool = True):
     """현재 매장 + 후보 계약조건 → 후보별 경제성 계산 + (explain=true 시) AI 자연어 설명.
     explain=false 로 호출하면 LLM 없이 숫자만 빠르게 반환."""
     try:
-        return staymove.run(payload, explain=explain)
+        return staymove.run(payload, explain=explain, use_rag=use_rag)
+    except ValueError as e:
+        # Rule Engine의 입력값 검증 오류 — 이미 사용자에게 보여줄 수 있는 한국어 문구.
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"분석 실패: {e}") from e
+        # 예상하지 못한 오류는 원인을 화면에 노출하지 않고 서버 로그로만 남긴다.
+        logging.exception("분석 서버 오류")
+        raise HTTPException(status_code=500, detail="분석 서버 연결을 확인해주세요.") from e
 
 
 # ── 주소 → 좌표 (NAVER Geocoding) ──
@@ -217,9 +225,11 @@ def commercial_area(req: CommercialAreaRequest):
         for loc in DEMO_LOCATIONS.values():
             if normalized == " ".join(loc["address"].split()):
                 return {**_area_payload(address=loc["address"], lat=loc["lat"], lng=loc["lng"]), "demo_fallback": True}
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        logging.warning("NAVER Geocoding 실패: %s", e)
+        raise HTTPException(status_code=400, detail="주소를 다시 확인해주세요.") from e
     except FileNotFoundError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
+        logging.warning("상권 데이터 파일 없음: %s", e)
+        raise HTTPException(status_code=503, detail="상권 데이터를 불러오지 못했습니다.") from e
 
 
 # ── 서울시 상권 근거 (로컬 전처리 DB) ──
