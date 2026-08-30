@@ -1,147 +1,188 @@
-# Stay or Move — Final Merge MVP
+# Stay or Move — Web Final Integration
 
-최종 기획안 기준으로 기존 Figma형 화면/Rule Engine 프로젝트와 정책금융 RAG 프로젝트를 합친 버전입니다.
+이 ZIP은 다음을 한 프로젝트로 합친 로컬 실행용 웹 버전입니다.
 
-## 핵심 사용자 흐름
+- 최종 온보딩 웹 흐름
+- Rule Engine
+- `ML_branch`의 원본 ML 코드/데이터/학습 artifact
+- 서울 상권 데이터 연결
+- 정책금융 RAG + FAISS index
+- 후보 A/B/C별 결과 화면
+- 선택적 LLM 설명
 
-첫 질문은 사용자가 `자발적/비자발적`이라는 용어를 고르게 하지 않습니다.
+## 최종 온보딩 흐름
 
-> 현재 매장에서 계속 영업할 수 있나요?
-
-- YES → **자발적 이전** → `현재 점포 Stay vs 후보지 Move`
-- NO → **비자발적 이전** → `후보 A vs 후보 B vs 후보 C`
-  - 현재 점포는 선택지가 아니라 기존 영업실적의 기준점으로만 사용
-
-## 통합된 계산/검색 흐름
-
-```text
-사용자 입력
-  ↓
-Rule Engine
-  ├─ 최소 필요 월매출
-  ├─ 필요 매출 유지율
-  ├─ 실제 이전비용
-  ├─ 초기 이전 소요자금
-  └─ 추가 필요 이전자금
-        ↓
-후보 주소 → 서울 자치구
-        ↓
-정책금융 RAG
-  ├─ 해당 자치구
-  ├─ 서울 공통
-  └─ 전국 공통
-        ↓
-Dashboard / 조건부 판단 근거
-```
-
-정책금융은 `추가 필요 이전자금`에서 지원한도를 자동 차감하지 않습니다. 검색된 정책은 실제 승인/지원 확정을 의미하지 않습니다.
-
-## 금액 단위
-
-프론트/Rule Engine 입력은 **만원**입니다.
-
-RAG에 전달할 때만:
-
-```python
-additional_fund_needed_krw = additional_fund_needed * 10_000
-```
-
-으로 원 단위로 변환합니다.
-
-## 주요 변경점
-
-- 온보딩: 자발/비자발 이전 분기
-- 자발적: Stay vs Move 프레이밍
-- 비자발적: Move vs Move 프레이밍
-- 현재 입력에 `보유 가용현금` 추가
-- 후보 입력에 `원상회복비`, `권리금`, `기타 이전비`, `목표 회수기간` 추가
-- 실제 이전비 공식: 인테리어 + 이사 + 원상회복 + 권리금 + 기타 + 휴업손실
-- 추가 필요 이전자금 계산 후 정책 RAG에 전달
-- 기존 607-vector FAISS 정책 DB 포함
-- 결과 화면에 정책금융 섹션 추가
-
-## 프로젝트 구조
+사용자에게 `자발적/비자발적`을 묻지 않습니다.
 
 ```text
-Stay_or_Move_merged/
-├── api/
-├── engine/
-├── geo/
-├── data_sources/
-├── data/
-├── policy_rag/
-│   ├── src/
-│   │   ├── retrieve.py
-│   │   └── ...
-│   ├── vector_db/
-│   │   ├── policy.index
-│   │   └── metadata.json
-│   └── data/
-├── web/
-├── staymove.py
-├── integration_test.py
-└── requirements.txt
+현재 주소
+→ 월평균 매출
+→ 월 변동비
+→ 월 고정비
+→ 현재 보증금
+→ 이전에 바로 쓸 수 있는 자기자금
+→ 후보지 수 1~3곳
+→ 후보 A/B/C 조건 입력
+→ 현재 고정비 vs 후보 월 운영비 비교
+→ cost_recovery 후보가 있으면 회수기간 1~36개월 질문
+→ Rule + ML + RAG + AI 설명
 ```
 
-## 1. Python 설치
+후보별 내부 분석모드는 다음과 같습니다.
+
+```text
+후보 월 운영비 > 현재 월 고정비
+→ growth_opportunity
+
+후보 월 운영비 <= 현재 월 고정비
+→ cost_recovery
+```
+
+UI에는 `자발적/비자발적`이라는 표현을 노출하지 않습니다.
+
+최종 온보딩 원본 HTML은 `docs/final_onboarding_reference.html`에도 같이 넣었습니다.
+
+## ML_branch 보존
+
+`ml/` 아래의 기존 ML_branch 파일은 그대로 보존했습니다.
+
+- `features.py`
+- `v1_sales_linear.py`
+- `v2_sales_gbm.py`
+- `v3_closure_clf.py`
+- `retention_trend.py`
+- `relocation_trajectory.py`
+- 원본 데이터
+- 학습된 joblib artifact
+
+서비스 연결만 위해 `ml/runtime.py`를 추가했습니다.
+
+학습 artifact가 scikit-learn 1.9.0에서 생성되어 `requirements.txt`도 `scikit-learn==1.9.0`으로 맞췄습니다.
+
+## API 지연 최소화
+
+분석 요청 때마다 무거운 모델을 다시 로드하지 않습니다.
+
+- ML joblib 모델: 프로세스당 1회 캐시
+- ML CSV/추세 데이터: 1회 캐시
+- FAISS index: 1회 캐시
+- SentenceTransformer: 1회 캐시
+- FastAPI 시작 시 warmup
+- 주소 A/B/C geocoding: 프론트에서 병렬 요청
+- 후보별 RAG는 로컬 FAISS만 검색
+- 기업마당 API/PDF/embedding 구축은 `/staymove` runtime에서 실행하지 않음
+- 최종 LLM 설명은 후보별 여러 번 호출하지 않고 A/B/C를 묶어 1회 호출
+
+`.env`에서:
+
+```env
+WARMUP_MODELS=true
+ENABLE_LLM_EXPLANATION=true
+```
+
+LLM 없이 Rule + ML + RAG 속도만 확인하려면:
+
+```text
+POST /staymove?explain=false&use_rag=true&use_ml=true
+```
+
+## 1. Python 실행
 
 ```bash
+cd Stay_or_Move_WEB_FINAL
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-`sentence-transformers` 모델은 첫 RAG 실행 시 Hugging Face에서 다운로드될 수 있습니다.
-
-## 2. 터미널 통합 확인
-
-Rule Engine 연결만 빠르게 확인:
-
-```bash
-python3 integration_test.py --no-rag
-```
-
-Rule Engine + 실제 정책 RAG까지 확인:
-
-```bash
-python3 integration_test.py
-```
-
-이 테스트는 두 경우를 모두 출력합니다.
-
-- A. 자발적 이전: Stay vs Move
-- B. 비자발적 이전: Move vs Move
-
-## 3. 백엔드 실행
-
-```bash
+cp .env.example .env
 uvicorn api.main:app --reload --port 8001
 ```
 
-`POST /staymove`는 기본적으로 Rule Engine + RAG를 실행합니다.
+> macOS Apple Silicon에서 `faiss-cpu` 설치 문제가 있으면 Python 3.11 또는 3.12 가상환경을 권장합니다.
 
-RAG 없이 Rule만 빠르게 확인하려면:
+## 2. Web 실행
 
-```text
-POST /staymove?explain=false&use_rag=false
-```
-
-## 4. 프론트 실행
+새 터미널:
 
 ```bash
-cd web
+cd Stay_or_Move_WEB_FINAL/web
 npm install
 npm run dev
 ```
 
-브라우저: `http://localhost:5173`
+브라우저:
 
-기존 화면의 디자인 언어를 유지하면서 첫 온보딩과 정책금융 결과 섹션만 추가했습니다.
-
-## 환경변수
-
-```bash
-cp .env.example .env
+```text
+http://localhost:5173
 ```
 
-NAVER 지도/주소 검색은 기존 환경변수를 그대로 사용합니다. OpenAI는 선택사항입니다. 정책 RAG 검색 자체는 OpenAI API를 사용하지 않습니다.
+## 3. 환경변수
+
+`.env.example`을 복사해서 사용합니다.
+
+핵심:
+
+```env
+NCP_APIGW_KEY_ID=
+NCP_APIGW_KEY=
+VITE_NCP_MAP_KEY_ID=
+OPENAI_API_KEY=
+OPENAI_MODEL_NAME=gpt-4o-mini
+ENABLE_LLM_EXPLANATION=true
+VITE_API_BASE=http://localhost:8001
+WARMUP_MODELS=true
+```
+
+`OPENAI_API_KEY`가 비어 있으면 Rule + ML + RAG 결과는 그대로 나오고 AI 자연어 설명만 fallback으로 표시됩니다.
+
+## 4. 통합 테스트
+
+빠른 Rule + ML 테스트:
+
+```bash
+python integration_test.py --no-rag
+```
+
+RAG 포함 테스트:
+
+```bash
+python integration_test.py
+```
+
+LLM까지 포함하려면 OpenAI key 설정 후:
+
+```bash
+python integration_test.py --explain
+```
+
+테스트 케이스:
+
+- A만 growth_opportunity
+- A만 cost_recovery + 17개월
+- A growth / B,C cost_recovery
+
+## 주요 구조
+
+```text
+Stay_or_Move_WEB_FINAL/
+├── api/
+├── engine/                 # Rule Engine
+├── ml/                     # ML_branch 원본 + runtime adapter
+├── policy_rag/             # corpus / FAISS / retrieval
+├── data/                   # 서울 상권 데이터
+├── geo/
+├── data_sources/
+├── web/                    # React + Vite 최종 웹 UI
+├── docs/
+│   └── final_onboarding_reference.html
+├── staymove.py             # Rule + ML + RAG + LLM orchestration
+├── integration_test.py
+├── requirements.txt
+└── .env.example
+```
+
+## 주의
+
+- 정책 RAG 결과는 지원 승인/수급 확정을 의미하지 않습니다.
+- 정책 한도가 추가 필요자금보다 커도 `전액 충당 가능`으로 판단하지 않습니다.
+- ML 결과는 추정치이며 Rule Engine 계산값을 대체하지 않습니다.
+- 현재 매장은 후보 A/B/C 비교를 위한 baseline으로 유지됩니다.

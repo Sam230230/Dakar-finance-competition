@@ -36,6 +36,25 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def warm_runtime_models():
+    """Move expensive model/index loading to server startup instead of first analysis request."""
+    if os.getenv("WARMUP_MODELS", "true").lower() == "false":
+        return
+    try:
+        from ml.runtime import warmup as warm_ml
+        warm_ml()
+        logging.info("ML runtime warmup complete")
+    except Exception:
+        logging.exception("ML warmup failed; lazy loading will be attempted on request")
+    try:
+        from policy_rag.src.retrieve import _load_runtime
+        _load_runtime()
+        logging.info("Policy RAG runtime warmup complete")
+    except Exception:
+        logging.exception("RAG warmup failed; lazy loading will be attempted on request")
+
+
 # =====================================================================
 #  요청 / 응답 모델
 # =====================================================================
@@ -115,16 +134,20 @@ def health():
         "naver_geocode_key": bool(os.getenv("NCP_APIGW_KEY_ID") and os.getenv("NCP_APIGW_KEY")),
         "openai_key": bool(os.getenv("OPENAI_API_KEY")),
         "policy_rag_index": (Path(__file__).resolve().parents[1] / "policy_rag" / "vector_db" / "policy.index").exists(),
+        "ml_artifacts": (Path(__file__).resolve().parents[1] / "ml" / "artifacts" / "v2_sales_gbm.joblib").exists(),
+        "single_llm_call": True,
     }
 
 
 # ── Stay or Move: 계산 + 자연어 설명 (핵심 엔드포인트) ──
 @app.post("/staymove")
-def staymove_endpoint(payload: dict, explain: bool = True, use_rag: bool = True):
-    """현재 매장 + 후보 계약조건 → 후보별 경제성 계산 + (explain=true 시) AI 자연어 설명.
-    explain=false 로 호출하면 LLM 없이 숫자만 빠르게 반환."""
+def staymove_endpoint(payload: dict, explain: bool = True, use_rag: bool = True, use_ml: bool = True):
+    """현재 매장 + 후보 계약조건 → Rule + ML + 후보별 Policy RAG + 선택적 AI 설명.
+
+    explain=false 이면 외부 LLM API 호출 없이 빠르게 구조화 결과만 반환한다.
+    """
     try:
-        return staymove.run(payload, explain=explain, use_rag=use_rag)
+        return staymove.run(payload, explain=explain, use_rag=use_rag, use_ml=use_ml)
     except ValueError as e:
         # Rule Engine의 입력값 검증 오류 — 이미 사용자에게 보여줄 수 있는 한국어 문구.
         raise HTTPException(status_code=400, detail=str(e)) from e

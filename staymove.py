@@ -1,13 +1,15 @@
-"""
-Stay or Move 오케스트레이터
+"""Stay or Move — integrated Rule + ML + Policy RAG orchestrator.
 
-최종 기획안 기준:
-- 온보딩 질문: "현재 매장에서 계속 영업할 수 있나요?"
-  YES -> 자발적 이전 (Stay vs Move)
-  NO  -> 비자발적 이전 (Move vs Move)
-- Rule Engine은 사용자 입력값만으로 계산한다.
-- Rule Engine의 추가 필요 이전자금을 정책자금 RAG 검색 Context로 전달한다.
-- RAG 결과는 지원 가능성을 확정하지 않고 "검토 가능한 정책 후보"만 반환한다.
+2026-08 integration rules:
+- No voluntary/involuntary onboarding question.
+- Each candidate is classified independently from recurring monthly cost:
+    growth_opportunity: candidate monthly cost > current monthly fixed cost
+    cost_recovery:      candidate monthly cost <= current monthly fixed cost
+- Recovery months (1~36) only affects cost_recovery candidates.
+- Rule Engine remains deterministic.
+- ML_branch artifacts/data are used as estimates, not replacements for Rule Engine.
+- Policy RAG searches each candidate district independently.
+- LLM explanation is ONE batch call for all candidates to reduce API latency.
 """
 from __future__ import annotations
 
@@ -15,7 +17,12 @@ import json
 import logging
 import os
 import re
+import time
 from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
+from engine.rule_engine import CurrentStore, CandidateStore, compute
 
 logger = logging.getLogger(__name__)
 
@@ -25,38 +32,38 @@ try:
 except Exception:
     pass
 
-from pydantic import BaseModel, Field
-
-from engine.rule_engine import CurrentStore, CandidateStore, compute
-
 SEOUL_DISTRICTS = [
-    "강남구", "강동구", "강북구", "강서구", "관악구",
-    "광진구", "구로구", "금천구", "노원구", "도봉구",
-    "동대문구", "동작구", "마포구", "서대문구", "서초구",
-    "성동구", "성북구", "송파구", "양천구", "영등포구",
-    "용산구", "은평구", "종로구", "중구", "중랑구",
+    "강남구", "강동구", "강북구", "강서구", "관악구", "광진구", "구로구", "금천구",
+    "노원구", "도봉구", "동대문구", "동작구", "마포구", "서대문구", "서초구", "성동구",
+    "성북구", "송파구", "양천구", "영등포구", "용산구", "은평구", "종로구", "중구", "중랑구",
 ]
 
 
 def extract_district(text: str) -> Optional[str]:
     value = text or ""
-    for district in SEOUL_DISTRICTS:
-        if district in value:
-            return district
-    return None
+    return next((d for d in SEOUL_DISTRICTS if d in value), None)
 
 
 class CurrentStoreIn(BaseModel):
+    address: str = ""
     monthly_sales: float
     variable_cost: float
     fixed_cost: float
     deposit: float = 0.0
-    available_cash: float = 0.0
+    available_self_fund: float = 0.0
+    # Legacy key accepted so older frontend payloads still work.
+    available_cash: Optional[float] = None
+    business_age_months: Optional[int] = Field(default=None, ge=0)
+
+    @property
+    def self_fund(self) -> float:
+        return self.available_self_fund if self.available_self_fund else float(self.available_cash or 0.0)
 
 
 class CandidateIn(BaseModel):
     site_id: str
     name: str
+    trdar_cd: Optional[str] = None
     monthly_rent: float
     maintenance_fee: float = 0.0
     other_fixed_cost: float = 0.0
@@ -66,23 +73,27 @@ class CandidateIn(BaseModel):
     restoration_cost: float = 0.0
     rights_fee: float = 0.0
     other_moving_cost: float = 0.0
-    closed_days: int = 0
-    target_months: int = 24
+    closed_days: int = Field(default=0, ge=0)
+    # Accepted for backwards compatibility; root target_recovery_months wins.
+    target_months: Optional[int] = Field(default=None, ge=1, le=36)
+
+    @property
+    def monthly_operating_cost(self) -> float:
+        return self.monthly_rent + self.maintenance_fee + self.other_fixed_cost
 
 
 class StayMoveIn(BaseModel):
     business_name: str = "우리 매장"
-    industry: str = "카페"
-    can_continue_current: bool = True
+    industry: str = "커피-음료"
+    industry_code: str = "CS100010"
     current_operating_status: str = "영업 중"
     current: CurrentStoreIn
-    candidates: List[CandidateIn] = Field(..., min_length=1, max_length=5)
+    candidates: List[CandidateIn] = Field(..., min_length=1, max_length=3)
+    target_recovery_months: Optional[int] = Field(default=None, ge=1, le=36)
+    # Legacy field is intentionally ignored; kept only so old demo requests do not 422.
+    can_continue_current: Optional[bool] = None
 
 
-# ── LLM Generation 출력 스키마 (후보 1곳 분량) ──
-# Retrieval(근거 수집)과 Generation(설명) 역할을 분리하기 위해, LLM은 아래 구조만
-# 채우고 정책명/금리/한도 등 사실 필드는 이후 _reconcile_policy_summary()에서
-# 검색 결과로 강제 치환한다(LLM이 새 정책을 만들어내도 반영되지 않음).
 class PolicySummaryItem(BaseModel):
     policy_name: str = ""
     region_slot: str = ""
@@ -107,79 +118,59 @@ class CandidateExplanation(BaseModel):
     important_checks: List[str] = Field(default_factory=list)
 
 
-class ComparisonSummary(BaseModel):
+class BatchExplanation(BaseModel):
+    candidates: List[CandidateExplanation] = Field(default_factory=list)
     comparison_text: str = ""
 
 
-def _policy_search(
-    *,
-    industry: str,
-    district: Optional[str],
-    fund_manwon: float,
-    relocation_type: str,
-    operating_status: str,
-    topk: int = 5,
-) -> dict:
+def _policy_search(*, industry: str, district: Optional[str], fund_manwon: float,
+                   analysis_mode: str, operating_status: str, topk: int = 4) -> tuple[dict, float]:
+    start = time.perf_counter()
     if fund_manwon <= 0:
-        return {
-            "status": "not_needed",
-            "message": "추가 필요 이전자금이 0원이므로 정책자금 검색을 우선 실행하지 않았습니다.",
-            "query": None,
-            "results": [],
-        }
+        return ({"status": "not_needed", "message": "추가 필요 이전자금이 0원이므로 정책자금 검색을 우선 실행하지 않았습니다.", "query": None, "results": []}, time.perf_counter() - start)
     if not district:
-        return {
-            "status": "region_unknown",
-            "message": "후보지 주소에서 서울 자치구를 확인할 수 없어 정책자금 검색을 실행하지 않았습니다.",
-            "query": None,
-            "results": [],
-        }
-
-    fund_krw = int(round(fund_manwon * 10_000))
+        return ({"status": "region_unknown", "message": "후보지 주소에서 서울 자치구를 확인할 수 없어 정책자금 검색을 실행하지 않았습니다.", "query": None, "results": []}, time.perf_counter() - start)
     try:
         from policy_rag.src.retrieve import compact_result, retrieve
-
         query, rows = retrieve(
             industry=industry,
             region=district,
-            fund=fund_krw,
+            fund=int(round(fund_manwon * 10_000)),
             topk=topk,
-            relocation_type=relocation_type,
+            relocation_type=("성장·기회 관점" if analysis_mode == "growth_opportunity" else "비용·회복 관점"),
             operating_status=operating_status,
         )
         results = [compact_result(row) for row in rows]
-        return {
+        out = {
             "status": "ok",
-            "message": (
-                "검색된 정책은 실제 승인 또는 지원 확정을 의미하지 않습니다."
-                if results
-                else "현재 조건에서 확인된 정책금융이 없습니다."
-            ),
+            "message": "검색된 정책은 실제 승인 또는 지원 확정을 의미하지 않습니다." if results else "현재 조건에서 확인된 정책금융이 없습니다.",
             "query": query,
             "results": results,
         }
-    except Exception as exc:  # RAG 오류가 Rule Engine 전체를 막지 않게 분리
-        # 화면에는 원인 문구를 그대로 노출하지 않고, 실제 예외는 서버 로그로만 남긴다.
+        return out, time.perf_counter() - start
+    except Exception:
         logger.exception("정책자금 RAG 검색 실패")
-        return {
-            "status": "error",
-            "message": "정책 데이터를 불러오지 못했습니다.",
-            "query": None,
-            "results": [],
-        }
+        return ({"status": "error", "message": "정책 데이터를 불러오지 못했습니다.", "query": None, "results": []}, time.perf_counter() - start)
 
 
-def analyze(payload: dict, use_rag: bool = True) -> dict:
-    """Rule Engine + 정책자금 RAG를 후보별로 계산한다."""
+def _ml_predict(*, c: CandidateIn, district: Optional[str], industry: str, industry_code: str) -> tuple[dict, float]:
+    start = time.perf_counter()
+    try:
+        from ml.runtime import predict_candidate
+        result = predict_candidate(trdar_cd=c.trdar_cd, district=district, industry=industry, industry_code=industry_code)
+        return result, time.perf_counter() - start
+    except Exception as exc:
+        logger.exception("ML 추론 실패")
+        return {"status": "error", "message": str(exc)[:200]}, time.perf_counter() - start
+
+
+def analyze(payload: dict, use_rag: bool = True, use_ml: bool = True) -> dict:
+    started = time.perf_counter()
     data = StayMoveIn(**payload)
-
     if data.current.monthly_sales <= 0:
         raise ValueError("현재 월평균 매출은 0보다 커야 합니다.")
     if data.current.variable_cost < 0 or data.current.fixed_cost < 0:
         raise ValueError("현재 매장의 비용은 0 이상이어야 합니다.")
-
-    relocation_type = "자발적" if data.can_continue_current else "비자발적"
-    comparison_mode = "STAY_VS_MOVE" if data.can_continue_current else "MOVE_VS_MOVE"
 
     cur = CurrentStore(
         monthly_sales=data.current.monthly_sales,
@@ -189,7 +180,15 @@ def analyze(payload: dict, use_rag: bool = True) -> dict:
     )
 
     analyses = []
+    rag_seconds = 0.0
+    ml_seconds = 0.0
+    has_cost_recovery = False
+
     for c in data.candidates:
+        analysis_mode = "growth_opportunity" if c.monthly_operating_cost > data.current.fixed_cost else "cost_recovery"
+        has_cost_recovery = has_cost_recovery or analysis_mode == "cost_recovery"
+        recovery_months = data.target_recovery_months or c.target_months or 24
+
         cand = CandidateStore(
             name=c.name,
             monthly_rent=c.monthly_rent,
@@ -203,49 +202,56 @@ def analyze(payload: dict, use_rag: bool = True) -> dict:
             other_moving_cost=c.other_moving_cost,
             closed_days=c.closed_days,
         )
-        res = compute(cur, cand)
+        # Include exact slider month in deterministic Rule Engine target calculation.
+        target_periods = sorted(set([12, 24, 36, recovery_months]))
+        res = compute(cur, cand, target_periods=target_periods)
 
-        target_periods = []
+        additional_fund_needed = max(0.0, res.initial_relocation_capital - data.current.self_fund)
+        district = extract_district(c.name)
+
+        policy_rag, rsec = (_policy_search(
+            industry=data.industry,
+            district=district,
+            fund_manwon=additional_fund_needed,
+            analysis_mode=analysis_mode,
+            operating_status=data.current_operating_status,
+        ) if use_rag else ({"status": "disabled", "message": "RAG 비활성화", "query": None, "results": []}, 0.0))
+        rag_seconds += rsec
+
+        ml_result, msec = (_ml_predict(c=c, district=district, industry=data.industry,
+                                       industry_code=data.industry_code)
+                           if use_ml else ({"status": "disabled"}, 0.0))
+        ml_seconds += msec
+
+        target_periods_out = []
         for months, required_sales in sorted(res.target_period_required_sales.items()):
-            target_periods.append({
+            target_periods_out.append({
                 "months": months,
                 "required_sales": round(required_sales),
                 "required_retention": round(required_sales / cur.monthly_sales, 4),
-                "selected": months == c.target_months,
+                "selected": analysis_mode == "cost_recovery" and months == recovery_months,
             })
-
-        additional_fund_needed = max(
-            0.0,
-            res.initial_relocation_capital - data.current.available_cash,
-        )
-        district = extract_district(c.name)
-        policy_rag = (
-            _policy_search(
-                industry=data.industry,
-                district=district,
-                fund_manwon=additional_fund_needed,
-                relocation_type=relocation_type,
-                operating_status=data.current_operating_status,
-            )
-            if use_rag
-            else {"status": "disabled", "message": "RAG 비활성화", "query": None, "results": []}
-        )
 
         analyses.append({
             "site_id": c.site_id,
             "name": c.name,
+            "trdar_cd": c.trdar_cd,
             "candidate_region": district,
+            "analysis_mode": analysis_mode,
+            "monthly_operating_cost": round(c.monthly_operating_cost),
+            "monthly_cost_delta": round(c.monthly_operating_cost - data.current.fixed_cost),
             "min_required_sales": round(res.min_required_sales),
             "required_retention": round(res.required_retention, 4),
             "initial_capital": round(res.initial_relocation_capital),
-            "available_cash": round(data.current.available_cash),
+            "available_self_fund": round(data.current.self_fund),
+            "available_cash": round(data.current.self_fund),
             "additional_fund_needed": round(additional_fund_needed),
             "additional_fund_needed_krw": int(round(additional_fund_needed * 10_000)),
             "net_deposit_change": round(res.net_deposit_change),
             "actual_relocation_cost": round(res.actual_relocation_cost),
             "candidate_fixed_cost": round(res.candidate_fixed_cost),
-            "target_months": c.target_months,
-            "target_periods": target_periods,
+            "target_months": recovery_months if analysis_mode == "cost_recovery" else None,
+            "target_periods": target_periods_out,
             "scenarios": [
                 {
                     "retention": s.retention,
@@ -255,6 +261,7 @@ def analyze(payload: dict, use_rag: bool = True) -> dict:
                 }
                 for s in res.payback_scenarios
             ],
+            "ml": ml_result,
             "policy_rag": policy_rag,
             "warnings": res.warnings,
         })
@@ -262,62 +269,43 @@ def analyze(payload: dict, use_rag: bool = True) -> dict:
     return {
         "business_name": data.business_name,
         "industry": data.industry,
-        "can_continue_current": data.can_continue_current,
-        "relocation_type": relocation_type,
-        "comparison_mode": comparison_mode,
-        "decision_options": (["STAY"] + [f"MOVE_{c.site_id}" for c in data.candidates]) if data.can_continue_current else [f"MOVE_{c.site_id}" for c in data.candidates],
+        "industry_code": data.industry_code,
+        "comparison_mode": "CANDIDATE_COMPARISON",
+        "decision_options": [f"MOVE_{c.site_id}" for c in data.candidates],
         "current_operating_status": data.current_operating_status,
+        "business_age_months": data.current.business_age_months,
+        "current_address": data.current.address,
         "current_operating_profit": round(cur.operating_profit),
         "current_monthly_sales": round(cur.monthly_sales),
-        "current_available_cash": round(data.current.available_cash),
+        "current_monthly_fixed_cost": round(cur.fixed_cost),
+        "current_available_self_fund": round(data.current.self_fund),
         "contribution_margin_rate": round(cur.contribution_margin_rate, 4),
+        "target_recovery_months": data.target_recovery_months if has_cost_recovery else None,
+        "needs_recovery_question": has_cost_recovery,
         "candidates": analyses,
+        "performance": {
+            "analysis_seconds": round(time.perf_counter() - started, 3),
+            "rag_retrieval_seconds": round(rag_seconds, 3),
+            "ml_inference_seconds": round(ml_seconds, 3),
+            "llm_seconds": 0.0,
+            "llm_calls": 0,
+        },
         "assumptions": [
             "후보 매장에서도 현재 매장과 동일한 변동비율이 유지된다고 가정합니다.",
             "현재 보증금은 이전 시점에 회수해 후보 보증금에 재투입할 수 있다고 가정합니다.",
             "정책지원 후보가 검색되어도 지원금이 확보된 것으로 계산하지 않습니다.",
-            "비자발적 이전에서는 현재 점포를 선택지로 두지 않고 기존 실적의 기준점으로만 사용합니다.",
+            "growth_opportunity / cost_recovery는 후보별 월 반복비용과 현재 월 고정비의 비교용 내부 분석모드이며 사용자에게 자발/비자발로 표시하지 않습니다.",
+            "ML 결과는 원본 ML_branch 모델/데이터를 이용한 추정치이며 Rule Engine의 확정 계산값을 대체하지 않습니다.",
         ],
     }
 
 
-def _candidate_fallback_paragraph(c: dict) -> str:
-    lines = [
-        f"{c['site_id']}({c['name']})는 현재 월 수익을 유지하려면 월 "
-        f"{c['min_required_sales']:,}만원, 현재 매출의 {c['required_retention']*100:.1f}%가 필요합니다. "
-        f"초기 이전 소요자금은 {c['initial_capital']:,}만원이고, 보유 가용현금을 반영한 "
-        f"추가 필요 이전자금은 {c['additional_fund_needed']:,}만원입니다."
-    ]
-    policies = c.get("policy_rag", {}).get("results", [])
-    if policies:
-        lines.append(
-            f"{c.get('candidate_region') or '후보지역'} 기준으로 검토 가능한 정책금융 후보 {len(policies)}건이 검색되었습니다. "
-            "실제 지원 가능 여부는 각 기관의 심사가 필요합니다."
-        )
-    return " ".join(lines)
-
-
-def _fallback_explanation(facts: dict) -> str:
-    lines = []
-    if facts["comparison_mode"] == "STAY_VS_MOVE":
-        lines.append("현재 매장을 유지할 수 있는 자발적 이전 상황으로, 현재 점포 Stay와 각 후보지 Move를 비교합니다.")
-    else:
-        lines.append("현재 매장을 유지하기 어려운 비자발적 이전 상황으로, 현재 점포는 기준점으로만 두고 후보지끼리 비교합니다.")
-    for c in facts["candidates"]:
-        lines.append(_candidate_fallback_paragraph(c))
-    return "\n\n".join(lines)
-
-
-# 사용자 재무 입력만으로는 검증할 수 없는 확인사항을 결정론적으로(=LLM 없이) 뽑아둔다.
-# LLM 결과의 important_checks에 이 목록을 항상 우선 병합해, 자격/출처/신청상태 경고가
-# 모델이 빠뜨리거나 지어내는 것과 무관하게 항상 노출되도록 한다.
 _STATUS_NEEDS_NOTE = {"마감", "오늘 마감", "예산 소진 여부 확인 필요", "신청기간 확인 필요"}
 
 
 def _deterministic_important_checks(candidate: dict) -> List[str]:
-    checks: List[str] = []
-    results = (candidate.get("policy_rag") or {}).get("results", [])
-    for p in results:
+    checks = []
+    for p in (candidate.get("policy_rag") or {}).get("results", []):
         name = p.get("name", "정책")
         if p.get("source_verification_needed"):
             checks.append(f"{name}: 공식 원공고 추가 확인 필요(출처 등급 C)")
@@ -326,123 +314,82 @@ def _deterministic_important_checks(candidate: dict) -> List[str]:
         status = p.get("application_status")
         if status in _STATUS_NEEDS_NOTE:
             checks.append(f"{name}: 신청상태 '{status}' — 접수 가능 여부 확인 필요")
-    if candidate.get("additional_fund_needed", 0) > 0 and not results:
+    if candidate.get("additional_fund_needed", 0) > 0 and not (candidate.get("policy_rag") or {}).get("results"):
         checks.append("현재 조건에서 확인된 정책금융이 없어 추가 자금조달 방안을 별도로 확인해야 합니다.")
-    seen: set = set()
-    ordered: List[str] = []
-    for item in checks:
-        if item not in seen:
-            seen.add(item)
-            ordered.append(item)
-    return ordered[:6]
+    return list(dict.fromkeys(checks))[:6]
 
 
-def _fallback_candidate_explanation(candidate: dict, failed: bool = False) -> dict:
-    results = (candidate.get("policy_rag") or {}).get("results", [])
+def _candidate_fallback_paragraph(c: dict) -> str:
+    base = (
+        f"후보 {c['site_id']}는 현재 월 수익을 유지하려면 월 {c['min_required_sales']:,}만원, "
+        f"현재 매출의 {c['required_retention']*100:.1f}%가 필요합니다. 초기 이전 소요자금은 "
+        f"{c['initial_capital']:,}만원이고 자기자금 반영 후 추가 필요 이전자금은 {c['additional_fund_needed']:,}만원입니다."
+    )
+    ml = c.get("ml") or {}
+    if ml.get("predicted_monthly_sales") is not None:
+        base += f" ML 추정 정상 월매출은 {ml['predicted_monthly_sales']:,}만원입니다."
+    return base
+
+
+def _fallback_candidate_explanation(c: dict, failed: bool = False) -> dict:
+    results = (c.get("policy_rag") or {}).get("results", [])
     return {
-        "candidate_id": candidate["site_id"],
-        "candidate_region": candidate.get("candidate_region") or "확인 필요",
+        "candidate_id": c["site_id"],
+        "candidate_region": c.get("candidate_region") or "확인 필요",
         "financial_summary": {
-            "additional_fund_needed": f"{candidate['additional_fund_needed']:,}만원",
-            "required_retention": f"{candidate['required_retention'] * 100:.1f}%",
-            "summary": _candidate_fallback_paragraph(candidate),
+            "additional_fund_needed": f"{c['additional_fund_needed']:,}만원",
+            "required_retention": f"{c['required_retention']*100:.1f}%",
+            "summary": _candidate_fallback_paragraph(c),
         },
         "policy_summary": [
             {
-                "policy_name": p.get("name", ""),
-                "region_slot": p.get("region_slot", ""),
-                "why_relevant": "",
-                "key_condition": p.get("amount_limit", ""),
-                "caution": p.get("eligibility_note", ""),
-                "source_url": p.get("url", ""),
-            }
-            for p in results[:5]
+                "policy_name": p.get("name", ""), "region_slot": p.get("region_slot", ""),
+                "why_relevant": "", "key_condition": p.get("amount_limit", ""),
+                "caution": p.get("eligibility_note", ""), "source_url": p.get("url", ""),
+            } for p in results[:4]
         ],
-        "candidate_interpretation": (
-            "AI 설명을 생성하지 못했습니다. 검색된 정책정보를 직접 확인해주세요."
-            if failed
-            else _candidate_fallback_paragraph(candidate)
-        ),
-        "important_checks": _deterministic_important_checks(candidate),
+        "candidate_interpretation": "AI 설명을 생성하지 못해 계산·검색 결과만 표시합니다." if failed else _candidate_fallback_paragraph(c),
+        "important_checks": _deterministic_important_checks(c),
         "mode": "error_fallback" if failed else "disabled",
     }
 
 
-def _rule_engine_block(facts: dict, candidate: dict) -> str:
-    lines = [
-        f"후보 ID: {candidate['site_id']}",
-        f"후보 지역: {candidate.get('candidate_region') or '확인 필요'}",
-        f"후보지 이름/주소: {candidate['name']}",
-        f"현재 월평균 매출: {facts['current_monthly_sales']:,}만원",
-        f"현재 월 영업이익: {facts['current_operating_profit']:,}만원",
-        f"최소 필요 월매출(현재 이익 유지 기준): {candidate['min_required_sales']:,}만원",
-        f"필요 매출 유지율: {candidate['required_retention'] * 100:.1f}%",
-        f"초기 이전 소요자금: {candidate['initial_capital']:,}만원",
-        f"보유 가용현금: {candidate['available_cash']:,}만원",
-        f"추가 필요 이전자금: {candidate['additional_fund_needed']:,}만원",
-        f"목표 회수기간: {candidate['target_months']}개월",
-    ]
-    target = next(
-        (t for t in candidate.get("target_periods", []) if t["months"] == candidate["target_months"]),
-        None,
-    )
-    if target:
-        lines.append(
-            f"{target['months']}개월 회수 목표 필요 매출: {target['required_sales']:,}만원 "
-            f"(매출 유지율 {target['required_retention'] * 100:.1f}%)"
-        )
-    scenario95 = next(
-        (s for s in candidate.get("scenarios", []) if round(s["retention"] * 100) == 95),
-        None,
-    )
-    if scenario95:
-        payback = scenario95.get("payback_months")
-        lines.append(f"매출 95% 유지 시 회수기간: {f'{payback}개월' if payback is not None else '회수 어려움'}")
-    return "\n".join(f"- {line}" for line in lines)
-
-
-def _policy_context_block(candidate: dict) -> str:
-    rag = candidate.get("policy_rag") or {}
-    results = rag.get("results", [])
+def _policy_context_block(c: dict) -> str:
+    results = (c.get("policy_rag") or {}).get("results", [])
     if not results:
-        return f"- 검색된 정책금융 없음 (status={rag.get('status')}, message={rag.get('message')})"
+        return "- 검색된 정책금융 없음"
     blocks = []
-    for i, p in enumerate(results[:5], 1):
-        evidence = (p.get("evidence") or "")[:300]
+    for i, p in enumerate(results[:4], 1):
         blocks.append(
-            f"[{i}] {p.get('name', '')}\n"
-            f"    지역슬롯={p.get('region_slot', '')} | 기관={p.get('agency', '')}\n"
-            f"    지원유형={p.get('support_type', '')} | 자금용도={p.get('fund_use', '')}\n"
-            f"    지원한도={p.get('amount_limit', '')} | 금리={p.get('interest_rate', '')}\n"
-            f"    업력요건={p.get('business_age_requirement', '')} | 신청기간={p.get('application_period', '')}\n"
-            f"    신청상태={p.get('application_status', '')}\n"
-            f"    자격추가확인={'예' if p.get('eligibility_needs_check') else '아니오'} ({p.get('eligibility_note', '')})\n"
-            f"    출처등급={p.get('source_grade') or '확인불가'} | 출처확인필요={'예' if p.get('source_verification_needed') else '아니오'}\n"
-            f"    공식링크={p.get('url', '')}\n"
-            f"    근거텍스트: {evidence}"
+            f"[{i}] {p.get('name','')} | 지역={p.get('region_slot','')} | 지원유형={p.get('support_type','')} | "
+            f"한도={p.get('amount_limit','')} | 금리={p.get('interest_rate','')} | 업력={p.get('business_age_requirement','')} | "
+            f"신청상태={p.get('application_status','')} | 출처등급={p.get('source_grade') or '확인불가'} | URL={p.get('url','')}"
         )
     return "\n".join(blocks)
 
 
-def _narrative_stance(comparison_mode: str) -> str:
-    if comparison_mode == "STAY_VS_MOVE":
-        return (
-            "현재 매장을 유지하는 선택지와 이 후보로 이전하는 선택지를 비교하는 관점으로 설명하되, "
-            "Stay 또는 Move 중 하나를 추천하지 말 것."
-        )
-    return (
-        "현재 매장은 선택지가 아니라 과거 실적 기준점이므로, 이 후보가 다른 이전 후보들과 비교했을 때 "
-        "재무 부담과 정책 활용 조건이 어떤지 설명할 것. 현재 매장 유지를 대안으로 제시하지 말 것."
-    )
-
-
-def _comparison_context(comparison_mode: str) -> str:
-    if comparison_mode == "STAY_VS_MOVE":
-        return "현재 매장을 유지할 수 있는 자발적 이전 상황이며, 이 후보는 현재 매장 대비 이전 옵션 중 하나입니다."
-    return (
-        "현재 매장을 유지하기 어려운 비자발적 이전 상황이며, 현재 매장은 기준점으로만 사용되고 "
-        "이 후보는 다른 이전 후보들과 비교됩니다."
-    )
+def _candidate_context(facts: dict, c: dict) -> str:
+    ml = c.get("ml") or {}
+    mode_label = "추가 비용을 감수할 가치/성장 가능성" if c["analysis_mode"] == "growth_opportunity" else "비용 절감/회복 가능성"
+    lines = [
+        f"후보 ID={c['site_id']}, 지역={c.get('candidate_region') or '확인 필요'}, 주소={c['name']}",
+        f"analysis_mode={c['analysis_mode']} ({mode_label})",
+        f"현재 월 고정비={facts['current_monthly_fixed_cost']:,}만원, 후보 월 반복비용={c['monthly_operating_cost']:,}만원, 차이={c['monthly_cost_delta']:+,}만원",
+        f"최소 필요 월매출={c['min_required_sales']:,}만원, 필요 매출 유지율={c['required_retention']*100:.1f}%",
+        f"초기 이전 소요자금={c['initial_capital']:,}만원, 추가 필요 이전자금={c['additional_fund_needed']:,}만원",
+    ]
+    if c["analysis_mode"] == "cost_recovery" and c.get("target_months"):
+        target = next((t for t in c["target_periods"] if t["months"] == c["target_months"]), None)
+        if target:
+            lines.append(f"목표 회수기간={c['target_months']}개월, 해당 기간 필요 월매출={target['required_sales']:,}만원")
+    if ml.get("predicted_monthly_sales") is not None:
+        lines.append(f"ML 예상 정상 월매출={ml['predicted_monthly_sales']:,}만원, 폐업확률 추정={ml.get('closure_probability')}")
+    if ml.get("district_trend"):
+        lines.append(f"ML 지역 추이={ml['district_trend']}")
+    lines.append("정책 RAG:\n" + _policy_context_block(c))
+    checks = _deterministic_important_checks(c)
+    lines.append("반드시 반영할 확인사항: " + ("; ".join(checks) if checks else "없음"))
+    return "\n".join(lines)
 
 
 def _normalize_policy_name(name: str) -> str:
@@ -450,250 +397,148 @@ def _normalize_policy_name(name: str) -> str:
 
 
 def _reconcile_policy_summary(items: List[PolicySummaryItem], results: List[dict]) -> List[dict]:
-    """LLM이 반환한 policy_summary를 검색 결과와 대조해, 실제 검색되지 않은
-    정책(=환각)은 버리고 지역슬롯/공식링크는 검색 결과 값으로 강제 치환한다."""
     by_name = {_normalize_policy_name(r.get("name", "")): r for r in results}
     reconciled = []
     for item in items:
         match = by_name.get(_normalize_policy_name(item.policy_name))
         if not match:
-            match = next(
-                (
-                    r
-                    for r in results
-                    if item.policy_name and (item.policy_name in r.get("name", "") or r.get("name", "") in item.policy_name)
-                ),
-                None,
-            )
+            match = next((r for r in results if item.policy_name and (item.policy_name in r.get("name", "") or r.get("name", "") in item.policy_name)), None)
         if not match:
-            logger.warning("LLM이 검색되지 않은 정책명을 생성해 제외함: %s", item.policy_name)
             continue
         reconciled.append({
-            "policy_name": match.get("name", ""),
-            "region_slot": match.get("region_slot", ""),
-            "why_relevant": item.why_relevant,
-            "key_condition": item.key_condition,
-            "caution": item.caution,
-            "source_url": match.get("url", ""),
+            "policy_name": match.get("name", ""), "region_slot": match.get("region_slot", ""),
+            "why_relevant": item.why_relevant, "key_condition": item.key_condition,
+            "caution": item.caution, "source_url": match.get("url", ""),
         })
     return reconciled
 
 
-def _build_llm(temperature: float = 0.2):
-    from crewai import LLM
-
-    return LLM(model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"), temperature=temperature)
-
-
-def _generate_candidate_explanations(facts: dict) -> dict:
-    """후보마다 별도의 LLM 호출로 근거 기반 설명을 생성한다(facts 전체를 한 번에
-    넣지 않음 — 후보 Context 분리가 이번 작업의 핵심 요구사항)."""
+def _generate_batch_explanation(facts: dict) -> tuple[dict, float]:
+    """One LLM call for A/B/C, instead of candidate-by-candidate + comparison calls."""
+    started = time.perf_counter()
     from crewai import Agent, Crew, Process, Task
-    from crewai.project import CrewBase, agent, crew, task
 
-    llm = _build_llm()
+    contexts = "\n\n===== 후보 구분 =====\n\n".join(_candidate_context(facts, c) for c in facts["candidates"])
+    agent = Agent(
+        role="매장 이전 경제성 설명가",
+        goal="Rule Engine, ML 추정, 검색된 정책 RAG 근거만 사용해 후보별 차이를 설명한다.",
+        backstory=(
+            "숫자와 공공정책 근거를 사장님의 언어로 번역한다. 계산값을 수정하지 않고, 검색되지 않은 정책을 만들지 않는다. "
+            "지원 가능성이나 이전 추천을 확정하지 않는다. 자발/비자발이라는 표현을 사용하지 않는다."
+        ),
+        llm=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
+        verbose=False,
+    )
+    task = Task(
+        description=f"""
+아래 후보 A/B/C 데이터는 이미 계산·검색이 끝난 근거입니다.
 
-    @CrewBase
-    class StayMoveExplainerCrew:
-        agents_config = "config/staymove_agents.yaml"
-        tasks_config = "config/staymove_tasks.yaml"
+{contexts}
 
-        @agent
-        def explainer(self) -> Agent:
-            return Agent(config=self.agents_config["explainer"], llm=llm, verbose=False)
+작성 규칙:
+1) candidates 배열에 실제 후보 수만큼 정확히 작성하고 candidate_id를 그대로 유지한다.
+2) financial_summary의 additional_fund_needed와 required_retention은 위 숫자를 그대로 옮긴다.
+3) policy_summary는 해당 후보의 '정책 RAG'에 나온 정책만 최대 4개 사용한다. 없는 정책/금리/한도/조건을 만들지 않는다.
+4) growth_opportunity는 '현재보다 반복비용을 더 부담할 만큼 성장 가능성이 있는지' 관점으로 설명한다.
+5) cost_recovery는 '비용 구조 안정과 이전비 회수 가능성' 관점으로 설명한다.
+6) ML은 추정치라고 명시하며 Rule Engine 확정값과 섞어 재계산하지 않는다.
+7) '지원받을 수 있다/신청 가능하다/전액 충당된다' 같은 확정 표현 금지. 자격·출처·신청상태 불명확 시 확인 필요라고 쓴다.
+8) 자발/비자발, STAY_VS_MOVE, MOVE_VS_MOVE 표현 금지.
+9) comparison_text는 순위/종합점수 없이 후보 차이만 3~5문장으로 설명한다.
+""",
+        expected_output="후보별 구조화 설명과 순위 없는 comparison_text",
+        agent=agent,
+        output_pydantic=BatchExplanation,
+    )
+    output = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False).kickoff()
+    parsed = getattr(output, "pydantic", None)
+    if not isinstance(parsed, BatchExplanation):
+        raise RuntimeError("구조화된 통합 설명을 받지 못했습니다.")
 
-        @task
-        def explain_task(self) -> Task:
-            return Task(config=self.tasks_config["explain_task"], output_pydantic=CandidateExplanation)
-
-        # 이름을 'crew'로 두면 함수-로컬 import(`from crewai.project import ... crew`)가
-        # 클래스 본문 안에서 이 메서드 이름에 가려져 NameError가 난다(클로저가 아니라
-        # 클래스 스코프의 지역 이름으로 취급됨). @crew는 메서드 이름을 요구하지 않으므로
-        # build_crew로 이름을 바꿔 충돌을 피한다.
-        @crew
-        def build_crew(self) -> Crew:
-            return Crew(agents=self.agents, tasks=self.tasks, process=Process.sequential, verbose=False)
-
-    candidates = facts["candidates"]
-    inputs_list = [
-        {
-            "candidate_id": c["site_id"],
-            "candidate_region": c.get("candidate_region") or "확인 필요",
-            "business_name": facts["business_name"],
-            "industry": facts["industry"],
-            "relocation_type": facts["relocation_type"],
-            "comparison_context": _comparison_context(facts["comparison_mode"]),
-            "narrative_stance": _narrative_stance(facts["comparison_mode"]),
-            "rule_engine_block": _rule_engine_block(facts, c),
-            "policy_context_block": _policy_context_block(c),
-            "deterministic_checks_block": (
-                "\n".join(f"- {x}" for x in _deterministic_important_checks(c)) or "- 없음"
-            ),
-        }
-        for c in candidates
-    ]
-
-    outputs = StayMoveExplainerCrew().build_crew().kickoff_for_each(inputs=inputs_list)
-    if len(outputs) != len(candidates):
-        raise RuntimeError("후보 수와 생성된 설명 수가 일치하지 않습니다.")
-
+    by_id = {x.candidate_id: x for x in parsed.candidates}
     explanations = {}
-    for c, output in zip(candidates, outputs):
-        parsed = getattr(output, "pydantic", None)
-        if not isinstance(parsed, CandidateExplanation):
-            raise RuntimeError(f"후보 {c['site_id']} 설명을 구조화된 JSON으로 받지 못했습니다.")
-
-        results = (c.get("policy_rag") or {}).get("results", [])
-        reconciled_policies = _reconcile_policy_summary(parsed.policy_summary, results)
-
-        merged_checks = list(_deterministic_important_checks(c))
-        for chk in parsed.important_checks:
-            if chk not in merged_checks:
-                merged_checks.append(chk)
-
+    for c in facts["candidates"]:
+        p = by_id.get(c["site_id"])
+        if not p:
+            explanations[c["site_id"]] = _fallback_candidate_explanation(c, failed=True)
+            continue
+        checks = list(_deterministic_important_checks(c))
+        for chk in p.important_checks:
+            if chk not in checks:
+                checks.append(chk)
         explanations[c["site_id"]] = {
             "candidate_id": c["site_id"],
             "candidate_region": c.get("candidate_region") or "확인 필요",
             "financial_summary": {
-                # Rule Engine 확정값은 LLM 출력이 아니라 여기서 다시 결정론적으로 채운다.
                 "additional_fund_needed": f"{c['additional_fund_needed']:,}만원",
-                "required_retention": f"{c['required_retention'] * 100:.1f}%",
-                "summary": parsed.financial_summary.summary,
+                "required_retention": f"{c['required_retention']*100:.1f}%",
+                "summary": p.financial_summary.summary,
             },
-            "policy_summary": reconciled_policies,
-            "candidate_interpretation": parsed.candidate_interpretation,
-            "important_checks": merged_checks[:8],
+            "policy_summary": _reconcile_policy_summary(p.policy_summary, (c.get("policy_rag") or {}).get("results", [])),
+            "candidate_interpretation": p.candidate_interpretation,
+            "important_checks": checks[:8],
             "mode": "llm",
         }
-    return explanations
+    return {"explanations": explanations, "comparison_text": parsed.comparison_text}, time.perf_counter() - started
 
 
-def _generate_comparison_summary(facts: dict, explanations: dict) -> Optional[str]:
-    """MOVE_VS_MOVE 후보 2곳 이상일 때만, 이미 생성된 후보별 요약을 근거로
-    순위 없는 비교 문단을 하나 더 생성한다(새 정책 검색/추정 없음)."""
-    if facts["comparison_mode"] != "MOVE_VS_MOVE" or len(facts["candidates"]) < 2:
-        return None
-
-    from crewai import Agent, Crew, Process, Task
-    from crewai.project import CrewBase, agent, crew, task
-
-    llm = _build_llm()
-
-    lines = []
-    for c in facts["candidates"]:
-        exp = explanations.get(c["site_id"])
-        if not exp:
-            continue
-        top_policy = exp["policy_summary"][0]["policy_name"] if exp["policy_summary"] else "확인된 정책 없음"
-        checks = "; ".join(exp["important_checks"][:2]) or "없음"
-        lines.append(
-            f"- 후보 {c['site_id']}({exp['candidate_region']}): "
-            f"추가 필요 이전자금 {exp['financial_summary']['additional_fund_needed']}, "
-            f"필요 매출 유지율 {exp['financial_summary']['required_retention']}, "
-            f"주요 정책 '{top_policy}', 확인사항 {checks}"
-        )
-    if not lines:
-        return None
-
-    @CrewBase
-    class ComparisonCrew:
-        agents_config = "config/staymove_agents.yaml"
-        tasks_config = "config/staymove_tasks.yaml"
-
-        @agent
-        def explainer(self) -> Agent:
-            return Agent(config=self.agents_config["explainer"], llm=llm, verbose=False)
-
-        @task
-        def comparison_task(self) -> Task:
-            return Task(config=self.tasks_config["comparison_task"], output_pydantic=ComparisonSummary)
-
-        @crew
-        def build_crew(self) -> Crew:
-            return Crew(agents=self.agents, tasks=self.tasks, process=Process.sequential, verbose=False)
-
-    output = ComparisonCrew().build_crew().kickoff(inputs={"candidate_summaries_block": "\n".join(lines)})
-    parsed = getattr(output, "pydantic", None)
-    return parsed.comparison_text if isinstance(parsed, ComparisonSummary) else None
-
-
-def run(payload: dict, explain: bool = True, use_rag: bool = True) -> dict:
-    facts = analyze(payload, use_rag=use_rag)
+def run(payload: dict, explain: bool = True, use_rag: bool = True, use_ml: bool = True) -> dict:
+    total_started = time.perf_counter()
+    facts = analyze(payload, use_rag=use_rag, use_ml=use_ml)
     if not explain:
+        facts["performance"]["total_seconds"] = round(time.perf_counter() - total_started, 3)
         return facts
 
     enable_llm = os.getenv("ENABLE_LLM_EXPLANATION", "true").strip().lower() != "false"
     has_key = bool(os.getenv("OPENAI_API_KEY"))
-    facts["comparison_summary"] = None
-
     if not enable_llm or not has_key:
         facts["explain_mode"] = "disabled"
-        facts["explanation_markdown"] = _fallback_explanation(facts)
+        facts["comparison_summary"] = None
         for c in facts["candidates"]:
             c["ai_explanation"] = _fallback_candidate_explanation(c)
+        facts["explanation_markdown"] = "\n\n".join(c["ai_explanation"]["candidate_interpretation"] for c in facts["candidates"])
+        facts["performance"]["total_seconds"] = round(time.perf_counter() - total_started, 3)
         return facts
 
     try:
-        explanations = _generate_candidate_explanations(facts)
+        batch, llm_seconds = _generate_batch_explanation(facts)
         for c in facts["candidates"]:
-            c["ai_explanation"] = explanations[c["site_id"]]
-        facts["explain_mode"] = "llm"
-        facts["explanation_markdown"] = "\n\n".join(
-            f"[{c['site_id']}] {c['ai_explanation']['candidate_interpretation']}" for c in facts["candidates"]
-        )
-    except Exception as e:  # noqa: BLE001
-        # Generation 실패가 Rule Engine + Retrieval 결과까지 막으면 안 된다.
-        logger.exception("AI 설명 생성 실패")
-        facts["explain_mode"] = "rule_rag_fallback"
-        facts["explain_error"] = str(e)[:400]
-        facts["explanation_markdown"] = _fallback_explanation(facts)
+            c["ai_explanation"] = batch["explanations"][c["site_id"]]
+        facts["comparison_summary"] = batch["comparison_text"] or None
+        facts["explanation_markdown"] = "\n\n".join(c["ai_explanation"]["candidate_interpretation"] for c in facts["candidates"])
+        facts["explain_mode"] = "llm_single_call"
+        facts["performance"]["llm_seconds"] = round(llm_seconds, 3)
+        facts["performance"]["llm_calls"] = 1
+    except Exception as exc:
+        logger.exception("통합 AI 설명 생성 실패")
+        facts["explain_mode"] = "rule_ml_rag_fallback"
+        facts["explain_error"] = str(exc)[:300]
+        facts["comparison_summary"] = None
         for c in facts["candidates"]:
             c["ai_explanation"] = _fallback_candidate_explanation(c, failed=True)
-        return facts
-
-    try:
-        facts["comparison_summary"] = _generate_comparison_summary(facts, explanations)
-    except Exception:  # noqa: BLE001
-        logger.exception("후보 비교 요약 생성 실패 (후보별 설명은 유지)")
-        facts["comparison_summary"] = None
-
+        facts["explanation_markdown"] = "\n\n".join(c["ai_explanation"]["candidate_interpretation"] for c in facts["candidates"])
+    facts["performance"]["total_seconds"] = round(time.perf_counter() - total_started, 3)
     return facts
 
 
 DEMO_PAYLOAD = {
     "business_name": "스테이 커피",
-    "industry": "카페",
-    "can_continue_current": True,
+    "industry": "커피-음료",
+    "industry_code": "CS100010",
     "current": {
-        "monthly_sales": 2800,
-        "variable_cost": 1120,
-        "fixed_cost": 930,
-        "deposit": 2000,
-        "available_cash": 1500,
+        "address": "서울 마포구 양화로 33",
+        "monthly_sales": 2800, "variable_cost": 1120, "fixed_cost": 930,
+        "deposit": 2000, "available_self_fund": 1500, "business_age_months": 36,
     },
+    "target_recovery_months": 24,
     "candidates": [
-        {
-            "site_id": "A",
-            "name": "서울 강남구 테헤란로 123",
-            "monthly_rent": 250,
-            "maintenance_fee": 20,
-            "other_fixed_cost": 450,
-            "deposit": 3000,
-            "interior_cost": 2500,
-            "moving_cost": 500,
-            "restoration_cost": 300,
-            "rights_fee": 0,
-            "closed_days": 15,
-            "target_months": 24,
-        },
+        {"site_id": "A", "name": "서울 마포구 망원로 50", "monthly_rent": 600, "maintenance_fee": 40, "other_fixed_cost": 400,
+         "deposit": 3000, "interior_cost": 2500, "moving_cost": 500, "restoration_cost": 300, "rights_fee": 0, "other_moving_cost": 0, "closed_days": 15},
+        {"site_id": "B", "name": "서울 마포구 월드컵로13길 18", "monthly_rent": 250, "maintenance_fee": 20, "other_fixed_cost": 300,
+         "deposit": 2500, "interior_cost": 1700, "moving_cost": 450, "restoration_cost": 300, "rights_fee": 0, "other_moving_cost": 0, "closed_days": 10},
     ],
 }
 
-
 if __name__ == "__main__":
     import sys
-
-    do_llm = "--explain" in sys.argv
-    no_rag = "--no-rag" in sys.argv
-    out = run(DEMO_PAYLOAD, explain=do_llm, use_rag=not no_rag)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    print(json.dumps(run(DEMO_PAYLOAD, explain="--explain" in sys.argv, use_rag="--no-rag" not in sys.argv), ensure_ascii=False, indent=2))
