@@ -1,0 +1,8 @@
+# ML 모듈 의존성
+pandas>=2.0
+numpy>=1.24
+scikit-learn==1.9.0
+lightgbm>=4.0     # 없으면 코드가 sklearn HistGradientBoosting 으로 자동 폴백
+shap>=0.44        # (선택) 피처 기여도. 없으면 SHAP 부분만 생략
+scipy>=1.10       # (선택) 회복곡선 curve_fit. 없으면 근사식 사용
+joblib>=1.3

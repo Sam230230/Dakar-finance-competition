@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stay or Move 온보딩 데모</title>
+<style>
+:root{
+  --bg:#f4f6f9; --card:#fff; --text:#171b23; --muted:#737d8c; --line:#e5e9ef;
+  --primary:#173a5e; --primary-soft:#edf4fb;
+  --green:#16735d; --green-soft:#ecf8f3; --orange:#b85a16; --orange-soft:#fff3e9;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Noto Sans KR","Segoe UI",sans-serif;
+}
+.phone{
+  width:min(440px,100%);min-height:800px;margin:24px auto;background:#fff;
+  border:1px solid var(--line);border-radius:28px;overflow:hidden;
+  box-shadow:0 16px 45px rgba(30,42,58,.09)
+}
+.top{display:flex;align-items:center;gap:12px;padding:18px 20px 8px}
+.back{border:0;background:transparent;font-size:25px;line-height:1;cursor:pointer;padding:7px}
+.progress{height:6px;flex:1;background:#edf0f4;border-radius:999px;overflow:hidden}
+.bar{height:100%;width:0;background:var(--primary);transition:.25s}
+.stepno{min-width:48px;text-align:right;font-size:12px;color:var(--muted)}
+.screen{min-height:680px;padding:32px 26px 26px;display:flex;flex-direction:column}
+.kicker{font-size:13px;font-weight:850;color:var(--primary);margin-bottom:9px}
+h1{margin:0;font-size:28px;line-height:1.3;letter-spacing:-.7px}
+.sub{margin:12px 0 0;font-size:14px;line-height:1.6;color:var(--muted)}
+.content{margin-top:32px}
+.input-line{display:flex;align-items:center;border-bottom:2px solid #ccd3dd;padding:11px 2px 8px}
+.input-line input{flex:1;min-width:0;border:0;outline:0;font-size:29px;font-weight:850;background:transparent}
+.input-line.text input{font-size:21px}
+.unit{font-size:16px;color:var(--muted);font-weight:700}
+.chips{display:flex;gap:9px;flex-wrap:wrap;margin-top:17px}
+.chip{
+  border:1px solid var(--line);background:#fff;border-radius:999px;padding:9px 13px;
+  font-size:13px;color:#4b5563;cursor:pointer
+}
+.choice-grid{display:grid;gap:11px}
+.choice{
+  width:100%;text-align:left;border:1px solid var(--line);background:#fff;border-radius:16px;
+  padding:17px 16px;cursor:pointer;font-size:16px;font-weight:800;line-height:1.45
+}
+.choice small{display:block;margin-top:5px;font-size:12px;font-weight:500;color:var(--muted);line-height:1.55}
+.footer{margin-top:auto;padding-top:28px}
+.next{
+  width:100%;border:0;background:var(--primary);color:#fff;border-radius:15px;
+  padding:16px 18px;font-size:16px;font-weight:850;cursor:pointer
+}
+.secondary{
+  width:100%;margin-top:10px;border:1px solid var(--line);background:#fff;color:var(--text);
+  border-radius:15px;padding:14px 18px;font-size:14px;font-weight:800;cursor:pointer
+}
+.tip{margin-top:18px;padding:14px 15px;border-radius:14px;background:#f7f9fc;color:#596576;font-size:13px;line-height:1.6}
+.demo-grid{display:grid;gap:12px;margin-top:22px}
+.demo-card{
+  width:100%;border:1px solid var(--line);background:#fff;border-radius:16px;padding:17px 16px;
+  text-align:left;cursor:pointer
+}
+.demo-card strong{display:block;font-size:15px;margin-bottom:5px}
+.demo-card small{display:block;color:var(--muted);font-size:12px;line-height:1.5}
+.demo-card.one{background:var(--orange-soft);border-color:#fed7aa}
+.demo-card.two{background:var(--green-soft);border-color:#b7e4d1}
+.demo-badge{
+  display:inline-flex;margin-bottom:8px;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:900;
+  background:#fff;border:1px solid rgba(0,0,0,.08)
+}
+.scenario-note{
+  margin-top:12px;font-size:12px;color:var(--muted);line-height:1.5
+}
+.candidate-card{border:1px solid var(--line);border-radius:18px;padding:16px}
+.candidate-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.candidate-name{font-size:16px;font-weight:900}
+.badge{font-size:11px;font-weight:850;padding:6px 9px;border-radius:999px;background:#f1f4f7;color:#596273}
+.field{margin-top:13px}
+.field label{display:block;margin-bottom:7px;font-size:12px;font-weight:750;color:var(--muted)}
+.field input{width:100%;border:1px solid #d9dee6;border-radius:11px;padding:12px;font-size:15px;outline:none}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.section-label{font-size:12px;font-weight:900;color:var(--primary);margin:18px 0 6px}
+.mini-help{font-size:11px;color:var(--muted);line-height:1.45;margin-top:6px}
+.summary{border:1px solid var(--line);border-radius:16px;padding:15px;margin-top:18px;background:#fafbfd}
+.row{display:flex;justify-content:space-between;gap:15px;padding:8px 0;border-top:1px solid #edf0f3;font-size:13px}
+.row:first-child{border-top:0}
+.row span:first-child{color:var(--muted)}
+.recovery-card{border:1px solid #b7e4d1;background:var(--green-soft);border-radius:16px;padding:15px;margin-top:18px}
+.recovery-card b{display:block;font-size:14px;margin-bottom:5px}
+.recovery-card p{margin:0;color:#557166;font-size:12px;line-height:1.55}
+.result-card{border:1px solid var(--line);border-radius:17px;padding:16px;margin-top:12px}
+.result-card h3{margin:0 0 5px;font-size:16px}
+.scope{display:inline-flex;padding:6px 9px;border-radius:999px;font-size:11px;font-weight:900;margin:7px 0 12px}
+.scope.growth{background:var(--orange-soft);color:var(--orange)}
+.scope.defense{background:var(--green-soft);color:var(--green)}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.metric{background:#f7f9fc;border-radius:12px;padding:12px}
+.metric .k{font-size:11px;color:var(--muted);margin-bottom:5px}
+.metric .v{font-size:16px;font-weight:900}
+.focus{margin-top:11px;border-left:4px solid var(--primary);background:#f8fafc;border-radius:10px;padding:11px 12px;font-size:12px;line-height:1.6}
+.prefill{
+  display:inline-flex;margin-top:14px;padding:7px 10px;background:#f0f5fa;border-radius:999px;
+  color:var(--primary);font-size:11px;font-weight:850
+}
+
+.slider-wrap{
+  margin-top:10px;
+  padding:22px 16px 18px;
+  border:1px solid var(--line);
+  border-radius:18px;
+  background:#fafbfd;
+}
+.slider-value{
+  display:flex;
+  align-items:baseline;
+  justify-content:center;
+  gap:5px;
+  margin-bottom:20px;
+}
+.slider-value strong{
+  font-size:38px;
+  line-height:1;
+  color:var(--primary);
+  letter-spacing:-1px;
+}
+.slider-value span{
+  font-size:16px;
+  color:var(--muted);
+  font-weight:800;
+}
+.range{
+  width:100%;
+  appearance:none;
+  -webkit-appearance:none;
+  height:8px;
+  border-radius:999px;
+  background:linear-gradient(
+    to right,
+    var(--primary) 0%,
+    var(--primary) var(--range-progress,65.7%),
+    #e4e9f0 var(--range-progress,65.7%),
+    #e4e9f0 100%
+  );
+  outline:none;
+}
+.range::-webkit-slider-thumb{
+  appearance:none;
+  -webkit-appearance:none;
+  width:26px;
+  height:26px;
+  border-radius:50%;
+  background:#fff;
+  border:7px solid var(--primary);
+  box-shadow:0 2px 8px rgba(23,58,94,.18);
+  cursor:grab;
+}
+.range::-webkit-slider-thumb:active{cursor:grabbing}
+.range::-moz-range-thumb{
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  background:#fff;
+  border:7px solid var(--primary);
+  box-shadow:0 2px 8px rgba(23,58,94,.18);
+  cursor:grab;
+}
+.range-labels{
+  display:flex;
+  justify-content:space-between;
+  margin-top:10px;
+  color:var(--muted);
+  font-size:11px;
+  font-weight:700;
+}
+.range-shortcuts{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+  margin-top:18px;
+}
+.range-shortcut{
+  border:1px solid var(--line);
+  background:#fff;
+  border-radius:11px;
+  padding:9px 6px;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+}
+.range-shortcut.active{
+  border-color:var(--primary);
+  background:var(--primary-soft);
+  color:var(--primary);
+}
+
+@media(max-width:480px){
+  .phone{margin:0;border-radius:0;min-height:100vh}
+  .screen{min-height:calc(100vh - 60px)}
+}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="top">
+    <button class="back" id="backBtn" aria-label="이전">‹</button>
+    <div class="progress"><div class="bar" id="bar"></div></div>
+    <div class="stepno" id="stepNo">시작</div>
+  </div>
+  <main class="screen" id="screen"></main>
+</div>
+
+<script>
+const screen=document.getElementById("screen");
+const backBtn=document.getElementById("backBtn");
+const bar=document.getElementById("bar");
+const stepNo=document.getElementById("stepNo");
+const labels=["A","B","C"];
+
+let history=[];
+let state=blankState();
+
+function blankState(){
+  return{
+    demoScenario:null,
+    current:{address:"",sales:null,variable:null,fixed:null,deposit:null,cash:null},
+    candidateCount:null,
+    candidates:[],
+    recoveryMonths:null
+  };
+}
+
+const money=n=>Math.round(Number(n||0)).toLocaleString("ko-KR")+"만원";
+function push(step,payload={}){history.push({step,payload});render(step,payload)}
+function reset(){history=[];state=blankState();push("start")}
+function back(){
+  if(history.length<=1)return;
+  history.pop();
+  const p=history[history.length-1];
+  render(p.step,p.payload);
+}
+backBtn.addEventListener("click",back);
+
+function setProgress(cur,total,label){
+  bar.style.width=total?`${Math.max(4,cur/total*100)}%`:"4%";
+  stepNo.textContent=label||`${cur}/${total}`;
+  backBtn.style.visibility=history.length<=1?"hidden":"visible";
+}
+
+function render(step,payload={}){
+  if(step==="start")return start();
+  if(step==="currentAddress")return textStep({
+    kicker:"현재 매장 · 1",title:"지금 운영 중인 카페는<br>어디에 있나요?",
+    sub:"주소를 기준으로 현재 상권 데이터를 연결합니다.",
+    value:state.current.address,placeholder:"예: 서울 마포구 연남동",
+    cur:1,onNext:v=>{state.current.address=v;push("sales")}
+  });
+  if(step==="sales")return moneyStep({
+    kicker:"현재 매장 · 2",title:"한 달 평균 매출은<br>얼마 정도예요?",
+    sub:"최근 3개월 평균을 기준으로 입력해주세요.",
+    value:state.current.sales,chips:[2000,2800,3500,4500],cur:2,
+    onNext:v=>{state.current.sales=v;push("variable")}
+  });
+  if(step==="variable")return moneyStep({
+    kicker:"현재 매장 · 3",title:"한 달 변동비는<br>얼마 정도 나가요?",
+    sub:"재료비, 결제수수료처럼 매출에 따라 달라지는 비용입니다.",
+    value:state.current.variable,chips:[600,900,1200,1500],cur:3,
+    onNext:v=>{state.current.variable=v;push("fixed")}
+  });
+  if(step==="fixed")return moneyStep({
+    kicker:"현재 매장 · 4",title:"한 달 고정비는<br>얼마 정도예요?",
+    sub:"월세, 고정 인건비, 관리비 등 매달 반복되는 비용입니다.",
+    value:state.current.fixed,chips:[700,1000,1300,1600],cur:4,
+    onNext:v=>{state.current.fixed=v;push("deposit")}
+  });
+  if(step==="deposit")return moneyStep({
+    kicker:"현재 매장 · 5",title:"현재 매장 보증금은<br>얼마예요?",
+    sub:"후보지 보증금과 비교해 실제 추가 부담을 계산합니다.",
+    value:state.current.deposit,chips:[2000,3000,5000,8000],cur:5,
+    onNext:v=>{state.current.deposit=v;push("cash")}
+  });
+  if(step==="cash")return moneyStep({
+    kicker:"현재 매장 · 6",title:"이전에 바로 쓸 수 있는<br>가용현금은 얼마예요?",
+    sub:"실제 이전에 사용할 수 있는 금액만 입력해주세요.",
+    value:state.current.cash,chips:[500,1000,1500,2500],cur:6,
+    onNext:v=>{state.current.cash=v;push("candidateCount")}
+  });
+  if(step==="candidateCount")return candidateCount();
+  if(step==="candidate")return candidate(payload.index);
+  if(step==="branchCheck")return branchCheck();
+  if(step==="recovery")return recovery();
+  if(step==="result")return result();
+}
+
+function start(){
+  setProgress(0,9,"시작");
+  screen.innerHTML=`
+    <div class="kicker">Stay or Move</div>
+    <h1>온보딩 데모 시나리오를<br>골라서 확인해보세요.</h1>
+    <p class="sub">시나리오를 누르면 결과로 바로 가지 않고, <b>해당 예시값이 채워진 첫 번째 온보딩 질문부터 시작</b>합니다. 값은 중간에 직접 수정할 수 있어요.</p>
+
+    <div class="content">
+      <div class="demo-grid">
+        <button class="demo-card one" id="scenario1">
+          <span class="demo-badge">시나리오 1</span>
+          <strong>현재보다 비용이 높은 후보를 검토하는 경우</strong>
+          <small>현재 매장과 후보 A·B·C의 예시값이 미리 채워집니다. 입력 화면을 끝까지 직접 확인할 수 있습니다.</small>
+        </button>
+
+        <button class="demo-card two" id="scenario2">
+          <span class="demo-badge">시나리오 2</span>
+          <strong>현재보다 비용이 낮은 후보를 검토하는 경우</strong>
+          <small>비용이 낮은 후보 예시값으로 온보딩을 시작하며, 마지막에 회수기간 추가 질문까지 확인할 수 있습니다.</small>
+        </button>
+      </div>
+
+      <button class="secondary" id="blankStart">빈 값으로 직접 시작</button>
+
+      <div class="tip">
+        시나리오 선택은 실제 사용자에게 “자발/비자발”을 묻는 기능이 아니라 <b>현재 데모 확인용</b>입니다.
+        실제 서비스에서는 빈 값으로 시작하고, 모든 입력이 끝난 뒤 시스템이 후보별 비용을 비교해 내부 분기합니다.
+      </div>
+    </div>`;
+  document.getElementById("scenario1").onclick=()=>loadScenarioAndStart(1);
+  document.getElementById("scenario2").onclick=()=>loadScenarioAndStart(2);
+  document.getElementById("blankStart").onclick=()=>{
+    state=blankState();
+    history=[];
+    push("currentAddress");
+  };
+}
+
+function prefillLabel(){
+  return state.demoScenario
+    ? `<div class="prefill">시나리오 ${state.demoScenario} 예시값이 입력되어 있어요 · 수정 가능</div>`
+    : "";
+}
+
+function textStep({kicker,title,sub,value,placeholder,cur,onNext}){
+  setProgress(cur,9);
+  screen.innerHTML=`
+    <div class="kicker">${kicker}</div>
+    <h1>${title}</h1>
+    <p class="sub">${sub}</p>
+    ${prefillLabel()}
+    <div class="content">
+      <div class="input-line text"><input id="answer" value="${value||""}" placeholder="${placeholder}"></div>
+    </div>
+    <div class="footer"><button class="next" id="nextBtn">다음</button></div>`;
+  document.getElementById("nextBtn").onclick=()=>{
+    const v=document.getElementById("answer").value.trim();
+    if(!v)return;
+    onNext(v);
+  };
+}
+
+function moneyStep({kicker,title,sub,value,chips,cur,onNext}){
+  setProgress(cur,9);
+  screen.innerHTML=`
+    <div class="kicker">${kicker}</div>
+    <h1>${title}</h1>
+    <p class="sub">${sub}</p>
+    ${prefillLabel()}
+    <div class="content">
+      <div class="input-line">
+        <input id="answer" type="number" min="0" value="${value??""}" placeholder="0">
+        <span class="unit">만원</span>
+      </div>
+      <div class="chips">
+        ${chips.map(v=>`<button class="chip" type="button" data-v="${v}">${Number(v).toLocaleString()}만원</button>`).join("")}
+      </div>
+    </div>
+    <div class="footer"><button class="next" id="nextBtn">다음</button></div>`;
+  const input=document.getElementById("answer");
+  document.querySelectorAll(".chip").forEach(b=>b.onclick=()=>input.value=b.dataset.v);
+  document.getElementById("nextBtn").onclick=()=>{
+    if(input.value==="")return;
+    onNext(Number(input.value));
+  };
+}
+
+function candidateCount(){
+  setProgress(7,9);
+  screen.innerHTML=`
+    <div class="kicker">후보지 · 7</div>
+    <h1>비교하고 싶은 후보지는<br>몇 곳인가요?</h1>
+    <p class="sub">최대 3곳까지 A·B·C 후보로 추가할 수 있어요.</p>
+    ${prefillLabel()}
+
+    <div class="content">
+      <div class="choice-grid">
+        ${[1,2,3].map(n=>`
+          <button class="choice" data-v="${n}">
+            ${n}곳
+            <small>${n===1?"후보 A만 분석":n===2?"후보 A·B 비교":"후보 A·B·C 비교"}${state.candidateCount===n?" · 현재 예시값":""}</small>
+          </button>`).join("")}
+      </div>
+    </div>`;
+  document.querySelectorAll(".choice").forEach(b=>b.onclick=()=>{
+    const n=Number(b.dataset.v);
+    state.candidateCount=n;
+    while(state.candidates.length<n) state.candidates.push(emptyCandidate());
+    state.candidates=state.candidates.slice(0,n);
+    push("candidate",{index:0});
+  });
+}
+
+function emptyCandidate(){
+  return{
+    address:"",rent:null,management:null,otherFixed:null,deposit:null,
+    interior:null,moving:null,restoration:null,rights:null,otherMove:null,closedDays:null
+  };
+}
+
+function candidate(i){
+  setProgress(8,9,`후보 ${labels[i]}`);
+  const c=state.candidates[i];
+  screen.innerHTML=`
+    <div class="kicker">후보 ${labels[i]} · ${i+1}/${state.candidateCount}</div>
+    <h1>후보 ${labels[i]}의 조건을<br>알려주세요.</h1>
+    <p class="sub">후보별 월 운영비와 일회성 이전비를 따로 계산합니다.</p>
+    ${prefillLabel()}
+
+    <div class="content">
+      <div class="candidate-card">
+        <div class="candidate-head">
+          <div class="candidate-name">후보 ${labels[i]}</div>
+          <span class="badge">${i===0?"A 필수":"선택 후보"}</span>
+        </div>
+
+        <div class="field">
+          <label>주소</label>
+          <input id="address" value="${c.address||""}" placeholder="예: 서울 성동구 성수동">
+        </div>
+
+        <div class="section-label">매달 반복되는 비용</div>
+        <div class="two">
+          <div class="field"><label>월세</label><input id="rent" type="number" min="0" value="${c.rent??""}" placeholder="만원"></div>
+          <div class="field"><label>관리비</label><input id="management" type="number" min="0" value="${c.management??""}" placeholder="만원"></div>
+        </div>
+        <div class="field"><label>기타 고정비</label><input id="otherFixed" type="number" min="0" value="${c.otherFixed??""}" placeholder="만원"></div>
+        <div class="mini-help">월세 + 관리비 + 기타 고정비를 합쳐 현재 매장 월 고정비와 비교합니다.</div>
+
+        <div class="section-label">한 번 발생하는 이전비</div>
+        <div class="two">
+          <div class="field"><label>보증금</label><input id="candidateDeposit" type="number" min="0" value="${c.deposit??""}" placeholder="만원"></div>
+          <div class="field"><label>인테리어비</label><input id="interior" type="number" min="0" value="${c.interior??""}" placeholder="만원"></div>
+        </div>
+        <div class="two">
+          <div class="field"><label>이사비</label><input id="moving" type="number" min="0" value="${c.moving??""}" placeholder="만원"></div>
+          <div class="field"><label>원상복구비</label><input id="restoration" type="number" min="0" value="${c.restoration??""}" placeholder="만원"></div>
+        </div>
+        <div class="two">
+          <div class="field"><label>권리금</label><input id="rights" type="number" min="0" value="${c.rights??""}" placeholder="만원"></div>
+          <div class="field"><label>기타 이전비</label><input id="otherMove" type="number" min="0" value="${c.otherMove??""}" placeholder="만원"></div>
+        </div>
+        <div class="field"><label>예상 휴업일수</label><input id="closedDays" type="number" min="0" value="${c.closedDays??""}" placeholder="일"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button class="next" id="nextBtn">${i+1<state.candidateCount?`후보 ${labels[i+1]} 확인하기`:"입력 완료"}</button>
+    </div>`;
+
+  document.getElementById("nextBtn").onclick=()=>{
+    const address=document.getElementById("address").value.trim();
+    if(!address)return;
+    Object.assign(c,{
+      address,
+      rent:Number(document.getElementById("rent").value||0),
+      management:Number(document.getElementById("management").value||0),
+      otherFixed:Number(document.getElementById("otherFixed").value||0),
+      deposit:Number(document.getElementById("candidateDeposit").value||0),
+      interior:Number(document.getElementById("interior").value||0),
+      moving:Number(document.getElementById("moving").value||0),
+      restoration:Number(document.getElementById("restoration").value||0),
+      rights:Number(document.getElementById("rights").value||0),
+      otherMove:Number(document.getElementById("otherMove").value||0),
+      closedDays:Number(document.getElementById("closedDays").value||0)
+    });
+
+    if(i+1<state.candidateCount) push("candidate",{index:i+1});
+    else push("branchCheck");
+  };
+}
+
+function monthly(c){
+  return Number(c.rent||0)+Number(c.management||0)+Number(c.otherFixed||0);
+}
+function lowerOrEqualCandidates(){
+  return state.candidates.filter(c=>monthly(c)<=Number(state.current.fixed||0));
+}
+
+function branchCheck(){
+  setProgress(9,9,"분석");
+  const lower=lowerOrEqualCandidates();
+  screen.innerHTML=`
+    <div class="kicker">입력 완료</div>
+    <h1>후보지 비용을<br>현재 매장과 비교했어요.</h1>
+    <p class="sub">여기서 사용자에게 자발/비자발을 보여주지는 않습니다. 후보별로 다음 질문과 결과 포커스만 달라집니다.</p>
+
+    <div class="content">
+      <div class="summary">
+        <div class="row"><span>현재 매장 월 고정비</span><b>${money(state.current.fixed)}</b></div>
+        ${state.candidates.map((c,i)=>`
+          <div class="row">
+            <span>후보 ${labels[i]} 월 운영비</span>
+            <b>${money(monthly(c))}</b>
+          </div>`).join("")}
+      </div>
+
+      <div class="tip">
+        ${lower.length
+          ?`현재보다 월 운영비가 낮거나 같은 후보가 ${lower.length}곳 있습니다. 그래서 다음 단계에서 목표 회수기간을 한 번 더 물어봅니다.`
+          :"모든 후보의 월 운영비가 현재보다 높습니다. 회수기간 추가 질문 없이 바로 결과로 이동합니다."}
+      </div>
+    </div>
+
+    <div class="footer"><button class="next" id="nextBtn">계속</button></div>`;
+  document.getElementById("nextBtn").onclick=()=>{
+    if(lower.length) push("recovery");
+    else push("result");
+  };
+}
+
+function recovery(){
+  setProgress(9,9,"추가");
+  const initialMonth = state.recoveryMonths || 24;
+
+  screen.innerHTML=`
+    <div class="kicker">추가 질문</div>
+    <h1>이전비용을 몇 개월 안에<br>회수하고 싶어요?</h1>
+    <p class="sub">1개월부터 36개월까지 원하는 기간을 직접 조절해보세요.</p>
+
+    <div class="content">
+      <div class="slider-wrap">
+        <div class="slider-value">
+          <strong id="monthValue">${initialMonth}</strong>
+          <span>개월</span>
+        </div>
+
+        <input
+          id="monthSlider"
+          class="range"
+          type="range"
+          min="1"
+          max="36"
+          step="1"
+          value="${initialMonth}"
+          aria-label="목표 회수기간"
+        >
+
+        <div class="range-labels">
+          <span>1개월</span>
+          <span>12개월</span>
+          <span>24개월</span>
+          <span>36개월</span>
+        </div>
+
+        <div class="range-shortcuts">
+          <button type="button" class="range-shortcut" data-v="12">12개월</button>
+          <button type="button" class="range-shortcut" data-v="24">24개월</button>
+          <button type="button" class="range-shortcut" data-v="36">36개월</button>
+        </div>
+      </div>
+
+      <div class="recovery-card">
+        <b>선택한 기간에 맞춰 필요매출을 다시 계산합니다.</b>
+        <p>기간이 짧을수록 매달 회수해야 하는 금액이 커져 목표 필요매출도 높아집니다.</p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button class="next" id="nextBtn">이 기간으로 계산하기</button>
+    </div>`;
+
+  const slider=document.getElementById("monthSlider");
+  const monthValue=document.getElementById("monthValue");
+  const shortcuts=[...document.querySelectorAll(".range-shortcut")];
+
+  function syncSlider(){
+    const value=Number(slider.value);
+    monthValue.textContent=value;
+
+    const percent=((value-1)/(36-1))*100;
+    slider.style.setProperty("--range-progress", percent+"%");
+
+    shortcuts.forEach(btn=>{
+      btn.classList.toggle("active", Number(btn.dataset.v)===value);
+    });
+  }
+
+  slider.addEventListener("input", syncSlider);
+
+  shortcuts.forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      slider.value=btn.dataset.v;
+      syncSlider();
+    });
+  });
+
+  document.getElementById("nextBtn").onclick=()=>{
+    state.recoveryMonths=Number(slider.value);
+    push("result");
+  };
+
+  syncSlider();
+}
+
+function calc(c){
+  const S=Number(state.current.sales||0);
+  const variable=Number(state.current.variable||0);
+  const currentFixed=Number(state.current.fixed||0);
+  const currentProfit=S-variable-currentFixed;
+  const vr=S>0?variable/S:0;
+  const contribution=Math.max(.01,1-vr);
+
+  const candidateFixed=monthly(c);
+  const minSales=(candidateFixed+currentProfit)/contribution;
+  const retention=S>0?minSales/S*100:0;
+
+  const closureLoss=Math.max(0,currentProfit)/30*Number(c.closedDays||0);
+  const extraDeposit=Math.max(0,Number(c.deposit||0)-Number(state.current.deposit||0));
+  const moveCost=
+    Number(c.interior||0)+Number(c.moving||0)+Number(c.restoration||0)+
+    Number(c.rights||0)+Number(c.otherMove||0)+closureLoss;
+  const initial=moveCost+extraDeposit;
+  const additional=Math.max(0,initial-Number(state.current.cash||0));
+  const branch=candidateFixed>currentFixed?"growth":"defense";
+  const months=state.recoveryMonths||24;
+  const targetSales=(moveCost/months+candidateFixed+currentProfit)/contribution;
+
+  return{candidateFixed,minSales,retention,initial,additional,branch,targetSales};
+}
+
+function result(){
+  setProgress(9,9,"완료");
+  const rows=state.candidates.map(calc);
+  screen.innerHTML=`
+    <div class="kicker">결과 예시</div>
+    <h1>후보마다 필요한 기준을<br>다르게 보여드릴게요.</h1>
+    <p class="sub">온보딩에서 입력한 값에 따라 후보별 결과 포커스가 달라집니다.</p>
+
+    <div class="summary">
+      <div class="row"><span>현재 월매출</span><b>${money(state.current.sales)}</b></div>
+      <div class="row"><span>현재 월 고정비</span><b>${money(state.current.fixed)}</b></div>
+      <div class="row"><span>가용현금</span><b>${money(state.current.cash)}</b></div>
+      ${state.recoveryMonths?`<div class="row"><span>선택한 회수기간</span><b>${state.recoveryMonths}개월</b></div>`:""}
+    </div>
+
+    ${state.candidates.map((c,i)=>{
+      const r=rows[i];
+      const growth=r.branch==="growth";
+      return`
+      <div class="result-card">
+        <h3>후보 ${labels[i]} · ${c.address}</h3>
+        <span class="scope ${growth?"growth":"defense"}">
+          ${growth?"기대효과·이전 성립 조건 중심":"비용부담·회복 조건 중심"}
+        </span>
+
+        <div class="metrics">
+          <div class="metric"><div class="k">월 운영비</div><div class="v">${money(r.candidateFixed)}</div></div>
+          <div class="metric"><div class="k">추가 필요 이전자금</div><div class="v">${money(r.additional)}</div></div>
+          <div class="metric"><div class="k">최소 필요 월매출</div><div class="v">${money(r.minSales)}</div></div>
+          <div class="metric"><div class="k">필요 매출 유지율</div><div class="v">${r.retention.toFixed(1)}%</div></div>
+          ${growth
+            ?`<div class="metric"><div class="k">초기 이전 소요자금</div><div class="v">${money(r.initial)}</div></div>
+               <div class="metric"><div class="k">핵심 관점</div><div class="v" style="font-size:13px">추가 비용 감수 가치</div></div>`
+            :`<div class="metric"><div class="k">${state.recoveryMonths||24}개월 회수 필요매출</div><div class="v">${money(r.targetSales)}</div></div>
+               <div class="metric"><div class="k">핵심 관점</div><div class="v" style="font-size:13px">손익·회복 가능성</div></div>`
+          }
+        </div>
+      </div>`;
+    }).join("")}
+
+    <div class="footer">
+      <button class="next" id="restart">다른 시나리오 확인</button>
+    </div>`;
+  document.getElementById("restart").onclick=reset;
+}
+
+function loadScenarioAndStart(n){
+  history=[];
+  state=blankState();
+  state.demoScenario=n;
+
+  if(n===1){
+    state.current={
+      address:"서울 마포구 연남동",
+      sales:2800,
+      variable:980,
+      fixed:1050,
+      deposit:3000,
+      cash:1500
+    };
+    state.candidateCount=3;
+    state.candidates=[
+      {address:"서울 강남구 역삼동",rent:1150,management:120,otherFixed:100,deposit:5000,interior:1800,moving:150,restoration:300,rights:500,otherMove:100,closedDays:7},
+      {address:"서울 성동구 성수동",rent:1050,management:100,otherFixed:80,deposit:4500,interior:1600,moving:150,restoration:300,rights:400,otherMove:100,closedDays:6},
+      {address:"서울 마포구 망원동",rent:980,management:100,otherFixed:70,deposit:4000,interior:1400,moving:120,restoration:250,rights:300,otherMove:80,closedDays:5}
+    ];
+    state.recoveryMonths=null;
+  }else{
+    state.current={
+      address:"서울 마포구 연남동",
+      sales:2800,
+      variable:980,
+      fixed:1200,
+      deposit:3000,
+      cash:1200
+    };
+    state.candidateCount=3;
+    state.candidates=[
+      {address:"서울 마포구 망원동",rent:700,management:90,otherFixed:60,deposit:3000,interior:1200,moving:120,restoration:250,rights:200,otherMove:80,closedDays:5},
+      {address:"서울 관악구 봉천동",rent:620,management:80,otherFixed:50,deposit:2500,interior:1100,moving:100,restoration:250,rights:150,otherMove:70,closedDays:5},
+      {address:"서울 은평구 응암동",rent:580,management:70,otherFixed:50,deposit:2000,interior:1000,moving:100,restoration:220,rights:100,otherMove:60,closedDays:4}
+    ];
+    state.recoveryMonths=null;
+  }
+
+  // 중요: 결과로 바로 가지 않고 첫 온보딩 질문부터 시작
+  push("currentAddress");
+}
+
+reset();
+</script>
+</body>
+</html>
