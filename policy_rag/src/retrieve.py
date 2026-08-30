@@ -102,49 +102,92 @@ def slot_for(meta: dict, user_region: str) -> str | None:
     return None
 
 
-def slot_quota(topk: int) -> dict:
-    quota = {
-        "local": round(topk * 2 / 5),
-        "seoul": round(topk * 1 / 5),
-        "national": round(topk * 2 / 5),
+def application_urgency_rank(status: str) -> int:
+    """1) 현재 접수가능성 — 접수중/오늘마감을 최우선, 마감은 별도로 걸러지므로 여기 오지 않는다."""
+    order = {
+        "접수 중": 0, "오늘 마감": 0,
+        "접수 예정": 1,
+        "예산 소진 여부 확인 필요": 2, "신청기간 확인 필요": 2,
     }
-    quota["national"] += topk - sum(quota.values())
-    return quota
+    return order.get(status, 2)
 
 
-def assign_slots(candidates: list[dict], region: str, topk: int) -> list[dict]:
-    buckets: dict[str, list[dict]] = {"local": [], "seoul": [], "national": []}
+def region_specificity_rank(slot: str | None) -> int:
+    """2) 지역 eligibility — 더 구체적인(자치구 전용) 정책을 서울 공통/전국보다 우선."""
+    order = {"local": 0, "seoul": 1, "national": 2}
+    return order.get(slot, 3)
+
+
+# 사용자가 실제로 부담하는 비용 항목과 정책의 실제 fund_use 문구가 겹칠 때만 가점한다 —
+# 정책이 명시하지 않은 용도에 임의로 적합하다고 단정하지 않는다.
+FUND_USE_TAG_KEYWORDS = {
+    "facility": ["시설자금", "시설개선", "설비", "인테리어"],
+    "working_capital": ["운전자금", "경영안정자금", "경영안정"],
+}
+
+
+def fund_use_match_rank(meta: dict, fund_use_tags: set[str] | None) -> int:
+    """5) 후보의 실제 자금필요(fund_use_tags)와 정책 fund_use 문구가 일치하면 0(우선), 아니면 1."""
+    if not fund_use_tags:
+        return 1
+    haystack = meta.get("fund_use") or ""
+    for tag in fund_use_tags:
+        if any(keyword in haystack for keyword in FUND_USE_TAG_KEYWORDS.get(tag, [])):
+            return 0
+    return 1
+
+
+def _recency_sort_value(meta: dict) -> tuple:
+    """6) 최신 회차 우선 — recency_key는 '클수록 최신'이므로 오름차순 정렬을 위해 부호를 뒤집는다."""
+    return tuple(-x for x in recency_key(meta))
+
+
+def rank_and_select(candidates: list[dict], region: str, topk: int,
+                     fund_use_tags: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+    """단일 우선순위로 정렬해 최대 topk개만 선택한다 — 자치구/서울/전국 비율을 강제하지 않고,
+    관련성이 낮으면 topk를 억지로 채우지 않는다(0/1/2/3건 모두 유효한 결과).
+
+    우선순위: ①접수가능성 ②지역 구체성 ③카페·소상공인 자격 명확성(업력 등 확인필요 키워드 포함)
+    ④(③에 포함) ⑤fund_use 일치 ⑥최신회차 ⑦source_grade ⑧semantic similarity.
+
+    마감(status=='마감') 정책은 usable에서 제외하고 historical로 따로 반환한다 — '지난 회차 참고'용.
+    """
+    usable: list[dict] = []
+    historical: list[dict] = []
     for cand in candidates:
-        slot = slot_for(cand["metadata"], region)
-        if slot:
-            buckets[slot].append(cand)
-    for bucket in buckets.values():
-        # 일반 금융정책을 항상 먼저 배치하고, 특수정책(LIPS 등)은 일반 정책이
-        # 부족해 quota가 남을 때만 보조적으로 채운다. 유사도 점수 자체는 건드리지 않는다.
-        bucket.sort(key=lambda c: (bool(c.get("is_special_finance")), -c["score"]))
+        meta = cand["metadata"]
+        status = compute_application_status(meta.get("application_period"))
+        item = dict(cand)
+        item["slot"] = slot_for(meta, region)
+        item["_status"] = status
+        item["eligibility_needs_check"] = _needs_eligibility_check(meta, cand.get("text", ""))
+        item["district_tenure_note"] = _has_district_tenure_condition(
+            _eligibility_haystack(meta, cand.get("text", ""))
+        )
+        (historical if status == "마감" else usable).append(item)
 
-    quota = slot_quota(topk)
-    take_count = {slot: min(quota[slot], len(buckets[slot])) for slot in SLOT_ORDER}
-    remaining = topk - sum(take_count.values())
-    if remaining > 0:
-        for slot in SLOT_ORDER:
-            extra = min(remaining, len(buckets[slot]) - take_count[slot])
-            take_count[slot] += extra
-            remaining -= extra
-            if remaining <= 0:
-                break
+    def sort_key(c: dict) -> tuple:
+        meta = c["metadata"]
+        return (
+            application_urgency_rank(c["_status"]),
+            region_specificity_rank(c["slot"]),
+            # LIPS/TIPS류 투자연계·창업특화 프로그램은 일반적인 점포 이전 자금 수요와 결이 달라
+            # 일반 금융정책이 있을 때는 뒤로 민다(제외는 아님 — 정말 그것뿐이면 그대로 노출).
+            bool(c.get("is_special_finance")),
+            0 if not c["eligibility_needs_check"] else 1,
+            fund_use_match_rank(meta, fund_use_tags),
+            _recency_sort_value(meta),
+            source_priority(meta),
+            -c["score"],
+        )
 
-    ordered: list[dict] = []
-    for slot in SLOT_ORDER:
-        for cand in buckets[slot][:take_count[slot]]:
-            item = dict(cand)
-            item["slot"] = slot
-            ordered.append(item)
-    return ordered
+    usable.sort(key=sort_key)
+    historical.sort(key=lambda c: -c["score"])
+    return usable[:topk], historical[:topk]
 
 
 def source_priority(meta: dict) -> int:
-    if meta.get("source_dataset") == "seoul_district_policy":
+    if meta.get("source_dataset") in ("seoul_district_policy", "seoul_program_split"):
         grade = meta.get("source_grade")
         if grade == "A":
             return 0
@@ -244,12 +287,15 @@ def build_query(
     fund: int,
     relocation_type: str | None = None,
     operating_status: str | None = None,
+    priority_note: str | None = None,
 ) -> str:
     context = []
     if relocation_type:
         context.append(f"이전유형은 {relocation_type} 이전")
     if operating_status:
         context.append(f"현재 상태는 {operating_status}")
+    if priority_note:
+        context.append(priority_note)
     extra = ". ".join(context)
     if extra:
         extra += ". "
@@ -377,10 +423,12 @@ def retrieve(
     topk: int = 5,
     relocation_type: str | None = None,
     operating_status: str | None = "영업 중",
+    priority_note: str | None = None,
+    fund_use_tags: set[str] | None = None,
 ):
     index, store, model = _load_runtime()
     chunks = store["chunks"]
-    query = build_query(industry, region, fund, relocation_type, operating_status)
+    query = build_query(industry, region, fund, relocation_type, operating_status, priority_note)
 
     vector = model.encode([query], convert_to_numpy=True, normalize_embeddings=True).astype("float32")
     scores, ids = index.search(vector, index.ntotal)
@@ -434,13 +482,10 @@ def retrieve(
             key = f"{scope}::{normalize_name(best['metadata'].get('name', ''))}"
             merged[key] = best
 
-    ranked = assign_slots(list(merged.values()), region, topk)
-    for row in ranked:
+    ranked, historical = rank_and_select(list(merged.values()), region, topk, fund_use_tags)
+    for row in ranked + historical:
         row.pop("_priority", None)
-        text = row.get("text", "")
-        row["eligibility_needs_check"] = _needs_eligibility_check(row["metadata"], text)
-        row["district_tenure_note"] = _has_district_tenure_condition(_eligibility_haystack(row["metadata"], text))
-    return query, ranked
+    return query, ranked, historical
 
 
 SOURCE_GRADE_NOTES = {
@@ -484,6 +529,7 @@ def compact_result(result: dict) -> dict:
         "url": meta.get("url", ""),
         "score": round(float(result["score"]), 4),
         "evidence": result.get("text", "")[:500],
+        "is_historical": result.get("_status") == "마감",
     }
 
 
@@ -496,7 +542,7 @@ def main():
     parser.add_argument("--type", dest="relocation_type", default="자발적")
     args = parser.parse_args()
 
-    query, results = retrieve(
+    query, results, historical = retrieve(
         industry=args.industry,
         region=args.region,
         fund=args.fund,
@@ -505,7 +551,7 @@ def main():
     )
     print("\n=== RAG 검색 Query ===")
     print(query)
-    print("\n=== 검색 결과 ===")
+    print(f"\n=== 검색 결과 (usable={len(results)}, historical/마감={len(historical)}) ===")
     for rank, result in enumerate(results, 1):
         item = compact_result(result)
         print(f"\n[{rank}] {item['name']}")

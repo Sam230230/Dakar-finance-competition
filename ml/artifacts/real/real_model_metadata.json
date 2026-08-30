@@ -1,0 +1,72 @@
+{
+  "model_name": "LightGBM",
+  "backend": "LightGBM",
+  "training_source": "Seoul commercial area actual data (자치구×커피-음료×분기 실제 추정매출 + 실측 인구)",
+  "target": "자치구 전체 커피-음료 업종 당월 추정매출(만원) — 개별 상권 값은 runtime에서 상권별 매출 비중으로 재분배",
+  "industry": "CS100010",
+  "industry_name": "커피-음료",
+  "grain": "signgu(자치구) x stdr_yyqu(분기)",
+  "train_period": "20221~20253",
+  "val_period": "20254",
+  "test_period": "20261",
+  "n_train": 375,
+  "n_val": 25,
+  "n_test": 25,
+  "features_num": [
+    "flow_pop",
+    "work_pop",
+    "resident_pop",
+    "prev_sales",
+    "yoy_sales"
+  ],
+  "features_cat": [
+    "signgu",
+    "season"
+  ],
+  "metrics": {
+    "validation": {
+      "mae": 119056.5,
+      "rmse": 202986.4,
+      "r2": 0.9934,
+      "smape": 4.46
+    },
+    "test": {
+      "mae": 118984.3,
+      "rmse": 217231.2,
+      "r2": 0.9918,
+      "smape": 4.26
+    }
+  },
+  "all_models_compared": {
+    "Linear": {
+      "val": {
+        "mae": 175844.0,
+        "rmse": 234226.2,
+        "r2": 0.9912,
+        "smape": 6.31
+      },
+      "test": {
+        "mae": 111816.7,
+        "rmse": 150230.3,
+        "r2": 0.9961,
+        "smape": 5.02
+      }
+    },
+    "LightGBM": {
+      "val": {
+        "mae": 119056.5,
+        "rmse": 202986.4,
+        "r2": 0.9934,
+        "smape": 4.46
+      },
+      "test": {
+        "mae": 118984.3,
+        "rmse": 217231.2,
+        "r2": 0.9918,
+        "smape": 4.26
+      }
+    }
+  },
+  "trained_at": "2026-08-30T13:02:05.518745+00:00",
+  "random_state": 42
+}

@@ -151,6 +151,99 @@ def build_district_chunks() -> list[dict]:
 
     return chunks
 
+# ─────────────────────────────────────────────────────────────────────────
+# 서울시 "2026년도 서울특별시 중소기업육성자금 융자지원계획 공고"(policy_id
+# PBLN_000000000117111)를 프로그램 단위로 분리한다.
+#
+# 이 표는 새로 지어낸 게 아니라, 이 정책의 official_pdf 청크(policy_rag/data/raw/docs에
+# 다운로드된 실제 첨부 PDF에서 추출된 원문, 붙임1 표)에 실제로 있는 숫자를 2026-08-30에
+# 수동으로 대조·전사한 것이다 — 아래 PDF 표 레이아웃은 셀 사이 공백이 불규칙해 범용
+# 정규식 파서보다 이 방식이 더 정확하다. **이 정책 문서에만 특화된 하드코딩이며 다른
+# 문서로 일반화하지 않는다.** 원문 공고가 갱신되면(회차 변경 등) 이 표도 다시 대조해야 한다.
+_SEOUL_FINANCE_PARENT_POLICY_ID = "PBLN_000000000117111"
+
+_SEOUL_FINANCE_PROGRAMS = [
+    {"program": "시설자금", "amount_limit": "시행규칙 별표3(구조조정·입지지원사업 등)", "interest_rate": "연 2.8%",
+     "target": "시행규칙 별표2에 해당하는 서울 소재 중소기업 및 소상공인(구조조정사업, 입지지원사업 등)", "fund_use": "facility"},
+    {"program": "성장기반자금", "amount_limit": "5억원 이내", "interest_rate": "연 3.0%",
+     "target": "시행규칙 별표1에 해당하는 서울 소재 중소기업 및 소상공인", "fund_use": "working_capital"},
+    {"program": "긴급자영업자금", "amount_limit": "5천만원 이내", "interest_rate": "연 2.5%",
+     "target": "생계형 영세 자영업자(기초생활수급자·차상위계층·실직자·장애인·여성가장·한부모가정 등) 또는 신청일 기준 매출액이 이전분기·반기 대비 20% 이상 급감/6개월 이내 임차료 30% 이상 상승한 소상공인",
+     "fund_use": "working_capital"},
+    {"program": "혁신형기업도약자금", "amount_limit": "3억원 이내", "interest_rate": "연 3.0%",
+     "target": "기술혁신기업, 경영혁신기업, 서울시 특화산업 분야 및 시책사업 추진 사업자", "fund_use": "working_capital"},
+    {"program": "재해중소기업자금", "amount_limit": "2억원 이내", "interest_rate": "연 2.0%",
+     "target": "사회재난·자연재해 피해를 입어 자치구 주민센터 등에서 재해 확인(증)을 받은 서울 소재 중소기업·소상공인", "fund_use": "working_capital"},
+    {"program": "경제활성화자금", "amount_limit": "5억원 이내", "interest_rate": "이차보전 1.8%(대출일로부터 4년 이내)",
+     "target": "시행규칙 별표1에 해당하는 서울 소재 중소기업 및 소상공인", "fund_use": "working_capital"},
+    {"program": "포용금융자금", "amount_limit": "3천만원 이내", "interest_rate": "이차보전 1.8%(대출일로부터 4년 이내)",
+     "target": "신용평점 839점 이하(구 4등급 이하)인 서울 소재 중소기업·소상공인", "fund_use": "working_capital"},
+    {"program": "창업기업자금", "amount_limit": "1억원 이내(일반 5천만원/특화 7천만원/임차 5천만원)", "interest_rate": "이차보전 1.8%(대출일로부터 4년 이내)",
+     "target": "서울 소재 창업 후 1년 이내 중소기업·소상공인 중 서울시 지정 창업교육 이수 등 요건 해당자", "fund_use": "working_capital"},
+    {"program": "신속드림자금", "amount_limit": "3천만원 이내", "interest_rate": "이차보전 1.8%(대출일로부터 4년 이내)",
+     "target": "신용평점 839점 이하 또는 저소득자(연소득 5,900만원 이하)·생계형 영세 자영업자·매출 20% 이상 급감/임차료 30% 이상 상승 기업",
+     "fund_use": "working_capital"},
+    {"program": "취약사업자지원자금", "amount_limit": "5천만원 이내", "interest_rate": "이차보전 2.5%(대출일로부터 5년 이내)",
+     "target": "서울신용보증재단이 지정한 취약사업자", "fund_use": "working_capital"},
+    {"program": "서울배달상생자금", "amount_limit": "1억원 이내", "interest_rate": "이차보전 2.0%(대출일로부터 5년 이내)",
+     "target": "신한은행 땡겨요 앱으로 3회 이상 주문실적이 있어 '서울배달상생기업'으로 인정된 사업자", "fund_use": "working_capital"},
+    {"program": "희망동행자금", "amount_limit": "1억원 이내", "interest_rate": "이차보전 1.8%(대출일로부터 5년 이내)",
+     "target": "경영애로 기업 중 서울신용보증재단 보증 또는 타 금융기관 대출을 이용 중인 사업자", "fund_use": "working_capital"},
+    {"program": "일자리창출우수기업자금", "amount_limit": "5억원 이내(사회보험가입촉진 대상 5천만원 이내)", "interest_rate": "이차보전 2.5%(대출일로부터 5년 이내)",
+     "target": "서울형 강소기업 인증, 상시근로자수 증가, 청년근로자 고용 등 일자리창출 요건 해당 기업", "fund_use": "working_capital"},
+    {"program": "ESG자금", "amount_limit": "1억원 이내", "interest_rate": "이차보전 2.5%(대출일로부터 5년 이내)",
+     "target": "환경(E)·사회적 책임(S)·지배구조(G) 분야 실천기업", "fund_use": "working_capital"},
+    {"program": "재기지원자금", "amount_limit": "1억원 이내", "interest_rate": "이차보전 2.5%(대출일로부터 5년 이내)",
+     "target": "성실실패자·재창업자 중 '서울형 다시서기 4.0 프로젝트' 등 참여 소상공인", "fund_use": "working_capital"},
+]
+
+
+def split_seoul_finance_programs(policies: list[dict]) -> list[dict]:
+    parent = next((p for p in policies if p.get("policy_id") == _SEOUL_FINANCE_PARENT_POLICY_ID), None)
+    if parent is None:
+        return []
+
+    chunks = []
+    for prog in _SEOUL_FINANCE_PROGRAMS:
+        program_slug = re.sub(r"\s+", "", prog["program"])
+        program_id = f"{_SEOUL_FINANCE_PARENT_POLICY_ID}_PROGRAM_{program_slug}"
+        text = (
+            f"프로그램명: {prog['program']} (2026년도 서울특별시 중소기업육성자금 융자지원계획의 세부 프로그램)\n"
+            f"소관/수행: 서울특별시 / 서울신용보증재단\n"
+            f"지원대상: {prog['target']}\n"
+            f"융자한도: {prog['amount_limit']}\n"
+            f"금리: {prog['interest_rate']}\n"
+            f"공식 공고 URL: {parent.get('url', '')}"
+        )
+        chunks.append({
+            "text": text,
+            "metadata": {
+                "policy_id": program_id,
+                "parent_policy_id": _SEOUL_FINANCE_PARENT_POLICY_ID,
+                "parent_policy_name": parent.get("name", ""),
+                "name": f"2026년 서울시 중소기업육성자금 - {prog['program']}",
+                "agency": "서울특별시(수행: 서울신용보증재단)",
+                "category": "융자",
+                "support_type": "융자",
+                "fund_use": prog["fund_use"] + (" (시설자금)" if prog["fund_use"] == "facility" else " (경영안정/운전자금)"),
+                "amount_limit": prog["amount_limit"],
+                "interest_rate": prog["interest_rate"],
+                "application_period": parent.get("application_period", ""),
+                "target_raw": prog["target"],
+                "districts_derived": [],
+                "region_scope_derived": "서울_공통",
+                "is_small_business_candidate_derived": True,
+                "url": parent.get("url", ""),
+                "source_dataset": "seoul_program_split",
+                "source_grade": "A",
+                "source_verification_needed": False,
+                "chunk_type": "program_split",
+                "chunk_index": 0,
+            },
+        })
+    return chunks
+
+
 def build_corpus() -> list[dict]:
     policies = read_jsonl(PROCESSED_DIR / "policies.jsonl")
     manifest = read_jsonl(PROCESSED_DIR / "doc_manifest.jsonl")
@@ -198,7 +291,11 @@ def build_corpus() -> list[dict]:
                 },
             })
 
-        # 공식 출력 PDF/첨부 PDF가 있으면 원문도 corpus에 추가.
+        # 공식 출력 PDF/첨부 PDF가 있으면 원문도 corpus에 추가 — 단, 서울시 육성자금
+        # 통합공고(PBLN_000000000117111)는 아래에서 프로그램 단위로 대체하므로 여기서는
+        # 뭉뚱그려진 페이지 청크를 만들지 않는다(중복 노출 방지).
+        if policy_id == _SEOUL_FINANCE_PARENT_POLICY_ID:
+            continue
         for doc in doc_map.get(policy_id, []):
             path = ROOT / doc["local_path"]
             if path.suffix.lower() != ".pdf":
@@ -220,6 +317,7 @@ def build_corpus() -> list[dict]:
                     },
                 })
 
+    chunks.extend(split_seoul_finance_programs(policies))
     chunks.extend(build_district_chunks())
 
     output = PROCESSED_DIR / "chunks.jsonl"

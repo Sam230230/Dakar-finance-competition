@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import MapView from "./MapView";
+import ResultScreen from "./ResultScreen";
+import { n, money } from "./insights";
 import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8001";
@@ -74,9 +75,6 @@ const CURRENT_STEPS = [
   { key: "available_self_fund", type: "money", kicker: "현재 매장 · 6", title: "이전에 바로 쓸 수 있는 자기자금은 얼마예요?", help: "생활비·비상자금은 제외해주세요. 현재 매장 보증금은 별도로 계산합니다." },
 ];
 
-function n(v) { return v === "" || v == null ? 0 : Number(v); }
-function money(v) { return Number.isFinite(Number(v)) ? Math.round(Number(v)).toLocaleString("ko-KR") : "-"; }
-function pct(v) { return Number.isFinite(Number(v)) ? `${(Number(v) * 100).toFixed(1)}%` : "-"; }
 function monthlyCost(c) { return n(c.monthly_rent) + n(c.maintenance_fee) + n(c.other_fixed_cost); }
 
 export default function App() {
@@ -88,6 +86,8 @@ export default function App() {
   const [candidateIndex, setCandidateIndex] = useState(0);
   const [recoveryMonths, setRecoveryMonths] = useState(24);
   const [result, setResult] = useState(null);
+  const [aiState, setAiState] = useState("idle");
+  const [loadingStage, setLoadingStage] = useState("core");
   const [places, setPlaces] = useState({ current: null, A: null, B: null, C: null });
   const [error, setError] = useState("");
   const [demoScenario, setDemoScenario] = useState(null);
@@ -223,17 +223,48 @@ export default function App() {
         })),
       };
 
-      // 한 번의 분석 API 호출 안에서 Rule + ML + 후보별 RAG + 최종 LLM 1회가 처리된다.
-      const r = await fetch(`${API_BASE}/staymove?explain=true&use_rag=true&use_ml=true`, {
+      // 1단계: Rule + ML + 후보별 RAG만 계산(수백 ms) — 서버는 이 결과를 analysis_id로
+      // 잠시 캐시해둔다. 화면 전환은 아직 하지 않는다: AI 해석까지 끝난 완성된 결과
+      // 화면을 한 번에 보여주고 싶다는 요구라, 로딩 화면에서 계속 대기한다.
+      const r = await fetch(`${API_BASE}/staymove?explain=false&use_rag=true&use_ml=true`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
       if (!r.ok) throw new Error(await r.text());
-      setResult(await r.json());
+      const core = await r.json();
+      setLoadingStage("ai");
+
+      // 2단계: AI 설명. 코어 계산값을 다시 클라이언트가 보내는 대신 서버가 analysis_id로
+      // 캐시해둔 값을 그대로 써서 프롬프트 인젝션 여지를 막는다. 실패해도 결과 자체는
+      // 이미 계산돼 있으므로 계산·검색 결과만으로 화면을 보여준다(전체 실패 아님).
+      let finalResult = core;
+      let nextAiState = "done";
+      try {
+        const er = await fetch(`${API_BASE}/staymove/explain`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analysis_id: core.analysis_id }),
+        });
+        if (!er.ok) throw new Error(await er.text());
+        const explain = await er.json();
+        const bySite = Object.fromEntries(explain.candidates.map((c) => [c.site_id, c.ai_explanation]));
+        finalResult = {
+          ...core,
+          candidates: core.candidates.map((c) => ({ ...c, ai_explanation: bySite[c.site_id] || c.ai_explanation })),
+          comparison_summary: explain.comparison_summary,
+          overall: explain.overall,
+          performance: { ...core.performance, ...explain.performance },
+        };
+      } catch {
+        nextAiState = "error";
+      }
+
+      setResult(finalResult);
+      setAiState(nextAiState);
       setPhase("result");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       setError(cleanError(e.message));
       setPhase("branchCheck");
+    } finally {
+      setLoadingStage("core");
     }
   }
 
@@ -243,8 +274,8 @@ export default function App() {
   if (phase === "candidate") return <CandidateForm candidate={candidates[candidateIndex]} index={candidateIndex} count={candidateCount} demoScenario={demoScenario} error={error} onChange={(k, v) => updateCandidate(candidateIndex, k, v)} onBack={goBack} onNext={nextCandidate} />;
   if (phase === "branchCheck") return <BranchCheck current={current} candidates={activeCandidates} lowerCount={lowerOrEqual.length} error={error} onBack={goBack} onNext={() => hasCostRecovery ? setPhase("recovery") : analyze()} />;
   if (phase === "recovery") return <Recovery months={recoveryMonths} setMonths={setRecoveryMonths} onBack={goBack} onNext={analyze} />;
-  if (phase === "loading") return <LoadingScreen />;
-  if (phase === "result") return <ResultScreen data={result} places={places} onRestart={() => setPhase("start")} />;
+  if (phase === "loading") return <LoadingScreen stage={loadingStage} />;
+  if (phase === "result") return <ResultScreen data={result} places={places} aiState={aiState} onRestart={() => setPhase("start")} />;
   return null;
 }
 
@@ -367,69 +398,26 @@ function Recovery({ months, setMonths, onBack, onNext }) {
   </main>;
 }
 
-const LOADING = ["후보지 조건을 계산하고 있어요", "상권 ML 데이터를 확인하고 있어요", "후보별 정책금융을 찾고 있어요", "결과 설명을 정리하고 있어요"];
-function LoadingScreen() {
+const LOADING_CORE = ["후보지 조건을 계산하고 있어요", "상권 ML 데이터를 확인하고 있어요", "후보별 정책금융을 찾고 있어요"];
+const LOADING_AI = "AI가 후보 간 차이를 해석하고 있어요";
+
+function LoadingScreen({ stage }) {
   const [i, setI] = useState(0);
-  useEffect(() => { const t = setInterval(() => setI((x) => (x + 1) % LOADING.length), 1600); return () => clearInterval(t); }, []);
-  return <main className="loading-page"><div className="spinner"/><h2>{LOADING[i]}</h2><p>ML·RAG 모델은 서버 시작 시 미리 로드하고, 최종 LLM 설명은 후보 전체를 한 번에 호출합니다.</p></main>;
-}
-
-function ResultScreen({ data, places, onRestart }) {
-  const rows = data?.candidates || [];
-  const [selectedId, setSelectedId] = useState(rows[0]?.site_id || "A");
-  const selected = rows.find((x) => x.site_id === selectedId) || rows[0] || {};
-  const mapCurrent = places.current ? { ...places.current, label: "현재 매장" } : null;
-  const mapCandidates = rows.map((c) => places[c.site_id] ? { ...places[c.site_id], site_id: c.site_id, label: c.name } : null).filter(Boolean);
-  return <main className="result-page">
-    <header className="result-head"><div><span className="eyebrow">분석 완료</span><h1>후보별로 필요한 조건을 비교해보세요.</h1><p>현재 매장은 비교 기준으로만 두고, 후보마다 비용 구조에 맞는 관점으로 분석했어요.</p></div><button onClick={onRestart}>다시 분석</button></header>
-    <nav className="candidate-tabs">{rows.map((c) => <button key={c.site_id} className={selectedId === c.site_id ? "active" : ""} onClick={() => setSelectedId(c.site_id)}>후보 {c.site_id}<small>{modeLabel(c.analysis_mode)}</small></button>)}</nav>
-
-    <section className="result-grid">
-      <div className="map-panel"><MapView current={mapCurrent} candidates={mapCandidates} selectedId={selectedId} showBoundaries /></div>
-      <div className="summary-panel">
-        <span className="mode-pill">{modeLabel(selected.analysis_mode)}</span>
-        <h2>{selected.name}</h2>
-        <p>{selected.analysis_mode === "growth_opportunity" ? "현재보다 월 반복비용을 더 부담하면서 옮길 만한 조건인지 봅니다." : "월 비용을 낮추면서 이전비를 얼마나 안정적으로 회수할 수 있는지 봅니다."}</p>
-        <div className="kpis">
-          <KPI label="후보 월 운영비" value={`${money(selected.monthly_operating_cost)}만`} sub={`현재 대비 ${selected.monthly_cost_delta >= 0 ? "+" : ""}${money(selected.monthly_cost_delta)}만`} />
-          <KPI label="최소 필요 월매출" value={`${money(selected.min_required_sales)}만`} sub={`현재 매출의 ${pct(selected.required_retention)}`} />
-          <KPI label="초기 이전 소요자금" value={`${money(selected.initial_capital)}만`} sub={`추가 필요 ${money(selected.additional_fund_needed)}만`} />
-          {selected.analysis_mode === "cost_recovery" && <KPI label={`${selected.target_months}개월 회수 목표`} value={`${money(selectedTarget(selected)?.required_sales)}만`} sub="필요 월매출" />}
-        </div>
-      </div>
-    </section>
-
-    <section className="result-columns">
-      <article className="result-card"><h3>ML 상권 예측</h3><MLBlock ml={selected.ml} /></article>
-      <article className="result-card"><h3>정책금융 RAG</h3><PolicyBlock rag={selected.policy_rag} /></article>
-    </section>
-
-    <section className="result-card ai-card"><h3>AI 설명</h3><p>{selected.ai_explanation?.candidate_interpretation || "LLM 설명이 비활성화되어 계산·검색 결과만 표시합니다."}</p>{selected.ai_explanation?.important_checks?.length > 0 && <div className="checks">{selected.ai_explanation.important_checks.map((x, i) => <span key={i}>확인 · {x}</span>)}</div>}</section>
-    {data.comparison_summary && <section className="result-card"><h3>후보 간 차이</h3><p>{data.comparison_summary}</p></section>}
-    <section className="perf"><b>실행시간</b><span>Rule+ML+RAG {data.performance?.analysis_seconds ?? "-"}s</span><span>RAG {data.performance?.rag_retrieval_seconds ?? "-"}s</span><span>ML {data.performance?.ml_inference_seconds ?? "-"}s</span><span>LLM {data.performance?.llm_seconds ?? "-"}s · {data.performance?.llm_calls ?? 0}회</span><span>전체 {data.performance?.total_seconds ?? "-"}s</span></section>
-  </main>;
-}
-
-function KPI({ label, value, sub }) { return <div className="kpi"><span>{label}</span><strong>{value}</strong><small>{sub}</small></div>; }
-function selectedTarget(c) { return (c?.target_periods || []).find((x) => x.selected) || null; }
-function modeLabel(mode) { return mode === "growth_opportunity" ? "성장·기회 관점" : "비용·회복 관점"; }
-
-function MLBlock({ ml }) {
-  if (!ml || ml.status === "error") return <p>ML 결과를 불러오지 못했습니다.</p>;
-  return <div className="detail-list">
-    <div><span>예상 정상 월매출</span><b>{ml.predicted_monthly_sales != null ? `${money(ml.predicted_monthly_sales)}만원` : "-"}</b></div>
-    <div><span>폐업 위험 추정</span><b>{ml.closure_probability != null ? `${(ml.closure_probability * 100).toFixed(1)}%` : "-"}</b></div>
-    <div><span>지역 분기 추세</span><b>{ml.district_trend ? `${ml.district_trend.trend} (${ml.district_trend.quarterly_growth_pct > 0 ? "+" : ""}${ml.district_trend.quarterly_growth_pct}%)` : "-"}</b></div>
-    <div><span>최근 전년동기 유지율</span><b>{ml.latest_yoy_retention ? `${(ml.latest_yoy_retention.retention * 100).toFixed(1)}%` : "-"}</b></div>
-    {ml.relocation_trajectory?.length > 0 && <div className="trajectory"><span>이전 후 회복궤적</span><div>{ml.relocation_trajectory.slice(0, 6).map((x) => <i key={x.month} title={`${x.month}개월 ${x.sales}만원`} style={{ height: `${Math.max(18, x.ratio * 70)}px` }} />)}</div><small>1~6개월 · 정상매출 대비 회복 비율</small></div>}
-    <small className="caution">ML은 추정치입니다. 원본 ML_branch 모델·전처리·데이터를 그대로 유지하고 runtime adapter만 연결했습니다.</small>
-  </div>;
-}
-
-function PolicyBlock({ rag }) {
-  const rows = rag?.results || [];
-  if (!rows.length) return <p>{rag?.message || "확인된 정책이 없습니다."}</p>;
-  return <div className="policy-list">{rows.map((p, i) => <div className="policy" key={`${p.name}-${i}`}><div><b>{p.name}</b><span>{p.region_slot} · {p.application_status || "상태 확인 필요"}</span></div><p>{[p.amount_limit, p.interest_rate, p.business_age_requirement].filter(Boolean).join(" · ") || "세부조건 확인 필요"}</p>{p.url && <a href={p.url} target="_blank" rel="noreferrer">공식 출처 ↗</a>}{(p.eligibility_needs_check || p.source_verification_needed) && <small>실제 신청 전 자격·원공고 확인 필요</small>}</div>)}</div>;
+  // core 단계 문구를 한 번 빠르게 훑고, ai 단계로 넘어가면(실제 병목) 그 문구에서 멈춘다 —
+  // 가짜 퍼센트 없이 지금 정말 무엇을 기다리는지만 보여준다.
+  useEffect(() => {
+    if (stage === "ai") return;
+    const t = setInterval(() => setI((x) => Math.min(x + 1, LOADING_CORE.length - 1)), 1400);
+    return () => clearInterval(t);
+  }, [stage]);
+  const label = stage === "ai" ? LOADING_AI : LOADING_CORE[i];
+  return (
+    <main className="loading-page">
+      <div className="spinner" />
+      <h2>{label}</h2>
+      <p>{stage === "ai" ? "AI 해석에는 10~20초 정도 걸릴 수 있어요. 결과는 해석까지 끝난 뒤 한 번에 보여드려요." : "잠시만 기다려주세요."}</p>
+    </main>
+  );
 }
 
 function cleanError(text = "") {

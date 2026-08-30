@@ -70,6 +70,49 @@ def lookup_metric(trdar_cd: str, industry_cd: str = "CS100010", path: str = DEFA
         con.close()
 
 
+def district_totals(trdar_codes: List[str], industry_cd: str = "CS100010", path: str = DEFAULT_DB) -> dict:
+    """Sum sales_amt_current/store_count across a set of TRDAR codes (one district's
+    commercial areas, from the TRDAR->district crosswalk) for one industry — this is the
+    real single-quarter (2025Q4 sales / 2024Q4 stores) snapshot used to convert a district-level
+    time-series sales forecast into a specific commercial area's share, without fabricating a
+    TRDAR-level time series that doesn't exist in the source data."""
+    if not trdar_codes:
+        return {"total_sales_amt": 0.0, "total_store_count": 0.0, "n_trdar_with_data": 0}
+    con = _connect(path)
+    try:
+        placeholders = ",".join("?" for _ in trdar_codes)
+        row = con.execute(
+            f"""
+            SELECT COALESCE(SUM(sales_amt_current), 0) AS total_sales_amt,
+                   COALESCE(SUM(store_count), 0) AS total_store_count,
+                   COUNT(*) AS n_trdar_with_data
+              FROM market_metrics
+             WHERE industry_cd = ? AND trdar_cd IN ({placeholders})
+            """,
+            (industry_cd, *[str(c) for c in trdar_codes]),
+        ).fetchone()
+        return dict(row)
+    finally:
+        con.close()
+
+
+def per_store_sales_values(industry_cd: str = "CS100010", path: str = DEFAULT_DB) -> List[float]:
+    """모든 TRDAR의 (sales_amt_current / store_count) 실측 분포 — 만원 단위.
+    특정 예측이 정상 범위 밖인지 판단하는 sanity-check 기준선으로 쓴다(모델 산출물이 아니라
+    실측 스냅샷 그 자체의 분포이므로, 이 분포 안에 있다면 pipeline이 만들어낸 왜곡이 아니라
+    실제로 그 정도로 매출 밀도가 높은/낮은 상권이 존재한다는 뜻이다)."""
+    con = _connect(path)
+    try:
+        rows = con.execute(
+            "SELECT sales_amt_current, store_count FROM market_metrics "
+            "WHERE industry_cd = ? AND store_count > 0 AND sales_amt_current IS NOT NULL",
+            (industry_cd,),
+        ).fetchall()
+        return [row["sales_amt_current"] / row["store_count"] / 10_000.0 for row in rows]  # 원->만원
+    finally:
+        con.close()
+
+
 def list_industries(path: str = DEFAULT_DB) -> List[dict]:
     con = _connect(path)
     try:

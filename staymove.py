@@ -23,6 +23,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from engine.rule_engine import CurrentStore, CandidateStore, compute
+from engine.ranking import rank_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -116,44 +117,79 @@ class CandidateExplanation(BaseModel):
     policy_summary: List[PolicySummaryItem] = Field(default_factory=list)
     candidate_interpretation: str = ""
     important_checks: List[str] = Field(default_factory=list)
+    one_line_summary: str = ""
+    strengths: List[str] = Field(default_factory=list)
+    risks: List[str] = Field(default_factory=list)
+    decision_condition: str = ""
+
+
+class OverallExplanation(BaseModel):
+    headline: str = ""
+    reason: str = ""
+    main_risk: str = ""
 
 
 class BatchExplanation(BaseModel):
     candidates: List[CandidateExplanation] = Field(default_factory=list)
     comparison_text: str = ""
+    overall: OverallExplanation = Field(default_factory=OverallExplanation)
 
 
-def _policy_search(*, industry: str, district: Optional[str], fund_manwon: float,
-                   analysis_mode: str, operating_status: str, topk: int = 4) -> tuple[dict, float]:
+def _fund_use_tags(*, interior_cost: float, additional_fund_needed: float) -> set:
+    """Derive which fund_use categories the candidate's own costs actually justify —
+    only used to prioritize policies whose own fund_use text already matches; never
+    used to claim eligibility for a use a policy doesn't itself mention."""
+    tags = set()
+    if interior_cost and interior_cost > 0:
+        tags.add("facility")
+    if additional_fund_needed and additional_fund_needed > 0:
+        tags.add("working_capital")
+    return tags
+
+
+def _policy_search(*, industry: str, district: Optional[str], fund_manwon: float, low_priority: bool,
+                   analysis_mode: str, operating_status: str, fund_use_tags: Optional[set] = None,
+                   topk: int = 3) -> tuple[dict, float]:
     start = time.perf_counter()
-    if fund_manwon <= 0:
-        return ({"status": "not_needed", "message": "추가 필요 이전자금이 0원이므로 정책자금 검색을 우선 실행하지 않았습니다.", "query": None, "results": []}, time.perf_counter() - start)
+    empty = {"status": "region_unknown", "message": "후보지 주소에서 서울 자치구를 확인할 수 없어 정책자금 검색을 실행하지 않았습니다.",
+              "query": None, "results": [], "historical": [], "fund_priority": "low" if low_priority else "normal"}
     if not district:
-        return ({"status": "region_unknown", "message": "후보지 주소에서 서울 자치구를 확인할 수 없어 정책자금 검색을 실행하지 않았습니다.", "query": None, "results": []}, time.perf_counter() - start)
+        return empty, time.perf_counter() - start
     try:
         from policy_rag.src.retrieve import compact_result, retrieve
-        query, rows = retrieve(
+        query, rows, historical_rows = retrieve(
             industry=industry,
             region=district,
             fund=int(round(fund_manwon * 10_000)),
             topk=topk,
             relocation_type=("성장·기회 관점" if analysis_mode == "growth_opportunity" else "비용·회복 관점"),
             operating_status=operating_status,
+            priority_note=("현재 자기자금으로 초기비용 충당 가능. 시설/운전자금·자기자금 보존 목적으로 참고." if low_priority else None),
+            fund_use_tags=fund_use_tags,
         )
         results = [compact_result(row) for row in rows]
+        historical = [compact_result(row) for row in historical_rows]
+        if low_priority:
+            message = "필수 자금조달 필요성은 낮지만, 자기자금 보존 또는 시설·운전자금 측면에서 참고할 수 있습니다." if results else "현재 조건에서 확인된 정책금융이 없습니다."
+        else:
+            message = "검색된 정책은 실제 승인 또는 지원 확정을 의미하지 않습니다." if results else "현재 조건에서 확인된 정책금융이 없습니다."
         out = {
             "status": "ok",
-            "message": "검색된 정책은 실제 승인 또는 지원 확정을 의미하지 않습니다." if results else "현재 조건에서 확인된 정책금융이 없습니다.",
+            "message": message,
             "query": query,
             "results": results,
+            "historical": historical,
+            "fund_priority": "low" if low_priority else "normal",
         }
         return out, time.perf_counter() - start
     except Exception:
         logger.exception("정책자금 RAG 검색 실패")
-        return ({"status": "error", "message": "정책 데이터를 불러오지 못했습니다.", "query": None, "results": []}, time.perf_counter() - start)
+        return ({**empty, "status": "error", "message": "정책 데이터를 불러오지 못했습니다."}, time.perf_counter() - start)
 
 
 def _ml_predict(*, c: CandidateIn, district: Optional[str], industry: str, industry_code: str) -> tuple[dict, float]:
+    """Returns {"ml": {...}, "market_observed": {...}} in every branch so the caller
+    can always unpack both keys uniformly regardless of success/error/disabled."""
     start = time.perf_counter()
     try:
         from ml.runtime import predict_candidate
@@ -161,7 +197,10 @@ def _ml_predict(*, c: CandidateIn, district: Optional[str], industry: str, indus
         return result, time.perf_counter() - start
     except Exception as exc:
         logger.exception("ML 추론 실패")
-        return {"status": "error", "message": str(exc)[:200]}, time.perf_counter() - start
+        return (
+            {"ml": {"status": "error", "message": str(exc)[:200]}, "market_observed": {"status": "error"}},
+            time.perf_counter() - start,
+        )
 
 
 def analyze(payload: dict, use_rag: bool = True, use_ml: bool = True) -> dict:
@@ -209,19 +248,25 @@ def analyze(payload: dict, use_rag: bool = True, use_ml: bool = True) -> dict:
         additional_fund_needed = max(0.0, res.initial_relocation_capital - data.current.self_fund)
         district = extract_district(c.name)
 
+        # ML (lightgbm/sklearn) is loaded before RAG (torch/faiss/sentence-transformers) —
+        # loading them in the opposite order in a fresh process crashes native OpenMP/BLAS
+        # init on this stack. The FastAPI startup warmup already loads them in this same
+        # safe order; this keeps ad-hoc/CLI runs (no warmup) safe too.
+        ml_result, msec = (_ml_predict(c=c, district=district, industry=data.industry,
+                                       industry_code=data.industry_code)
+                           if use_ml else ({"ml": {"status": "disabled"}, "market_observed": {"status": "disabled"}}, 0.0))
+        ml_seconds += msec
+
         policy_rag, rsec = (_policy_search(
             industry=data.industry,
             district=district,
-            fund_manwon=additional_fund_needed,
+            fund_manwon=additional_fund_needed if additional_fund_needed > 0 else res.initial_relocation_capital,
+            low_priority=additional_fund_needed <= 0,
             analysis_mode=analysis_mode,
             operating_status=data.current_operating_status,
-        ) if use_rag else ({"status": "disabled", "message": "RAG 비활성화", "query": None, "results": []}, 0.0))
+            fund_use_tags=_fund_use_tags(interior_cost=c.interior_cost, additional_fund_needed=additional_fund_needed),
+        ) if use_rag else ({"status": "disabled", "message": "RAG 비활성화", "query": None, "results": [], "historical": []}, 0.0))
         rag_seconds += rsec
-
-        ml_result, msec = (_ml_predict(c=c, district=district, industry=data.industry,
-                                       industry_code=data.industry_code)
-                           if use_ml else ({"status": "disabled"}, 0.0))
-        ml_seconds += msec
 
         target_periods_out = []
         for months, required_sales in sorted(res.target_period_required_sales.items()):
@@ -250,7 +295,8 @@ def analyze(payload: dict, use_rag: bool = True, use_ml: bool = True) -> dict:
             "net_deposit_change": round(res.net_deposit_change),
             "actual_relocation_cost": round(res.actual_relocation_cost),
             "candidate_fixed_cost": round(res.candidate_fixed_cost),
-            "target_months": recovery_months if analysis_mode == "cost_recovery" else None,
+            "target_months": recovery_months,
+            "recovery_relevance": "primary" if analysis_mode == "cost_recovery" else "secondary",
             "target_periods": target_periods_out,
             "scenarios": [
                 {
@@ -261,7 +307,8 @@ def analyze(payload: dict, use_rag: bool = True, use_ml: bool = True) -> dict:
                 }
                 for s in res.payback_scenarios
             ],
-            "ml": ml_result,
+            "ml": ml_result.get("ml", ml_result),
+            "market_observed": ml_result.get("market_observed", {"status": "unavailable"}),
             "policy_rag": policy_rag,
             "warnings": res.warnings,
         })
@@ -280,9 +327,10 @@ def analyze(payload: dict, use_rag: bool = True, use_ml: bool = True) -> dict:
         "current_monthly_fixed_cost": round(cur.fixed_cost),
         "current_available_self_fund": round(data.current.self_fund),
         "contribution_margin_rate": round(cur.contribution_margin_rate, 4),
-        "target_recovery_months": data.target_recovery_months if has_cost_recovery else None,
+        "target_recovery_months": data.target_recovery_months or 24,
         "needs_recovery_question": has_cost_recovery,
         "candidates": analyses,
+        "ranking": rank_candidates(analyses),
         "performance": {
             "analysis_seconds": round(time.perf_counter() - started, 3),
             "rag_retrieval_seconds": round(rag_seconds, 3),
@@ -346,10 +394,14 @@ def _fallback_candidate_explanation(c: dict, failed: bool = False) -> dict:
                 "policy_name": p.get("name", ""), "region_slot": p.get("region_slot", ""),
                 "why_relevant": "", "key_condition": p.get("amount_limit", ""),
                 "caution": p.get("eligibility_note", ""), "source_url": p.get("url", ""),
-            } for p in results[:4]
+            } for p in results[:3]
         ],
         "candidate_interpretation": "AI 설명을 생성하지 못해 계산·검색 결과만 표시합니다." if failed else _candidate_fallback_paragraph(c),
         "important_checks": _deterministic_important_checks(c),
+        "one_line_summary": "계산·검색 결과만 표시합니다." if failed else "AI 해석이 비활성화되어 계산·검색 결과만 표시합니다.",
+        "strengths": [],
+        "risks": [],
+        "decision_condition": "",
         "mode": "error_fallback" if failed else "disabled",
     }
 
@@ -359,7 +411,7 @@ def _policy_context_block(c: dict) -> str:
     if not results:
         return "- 검색된 정책금융 없음"
     blocks = []
-    for i, p in enumerate(results[:4], 1):
+    for i, p in enumerate(results[:3], 1):
         blocks.append(
             f"[{i}] {p.get('name','')} | 지역={p.get('region_slot','')} | 지원유형={p.get('support_type','')} | "
             f"한도={p.get('amount_limit','')} | 금리={p.get('interest_rate','')} | 업력={p.get('business_age_requirement','')} | "
@@ -370,6 +422,7 @@ def _policy_context_block(c: dict) -> str:
 
 def _candidate_context(facts: dict, c: dict) -> str:
     ml = c.get("ml") or {}
+    observed = c.get("market_observed") or {}
     mode_label = "추가 비용을 감수할 가치/성장 가능성" if c["analysis_mode"] == "growth_opportunity" else "비용 절감/회복 가능성"
     lines = [
         f"후보 ID={c['site_id']}, 지역={c.get('candidate_region') or '확인 필요'}, 주소={c['name']}",
@@ -383,12 +436,33 @@ def _candidate_context(facts: dict, c: dict) -> str:
         if target:
             lines.append(f"목표 회수기간={c['target_months']}개월, 해당 기간 필요 월매출={target['required_sales']:,}만원")
     if ml.get("predicted_monthly_sales") is not None:
-        lines.append(f"ML 예상 정상 월매출={ml['predicted_monthly_sales']:,}만원, 폐업확률 추정={ml.get('closure_probability')}")
-    if ml.get("district_trend"):
-        lines.append(f"ML 지역 추이={ml['district_trend']}")
+        source_note = "서울시 실제 상권 데이터 기반 모델(model_source=real)" if ml.get("model_source") == "real" else "합성 데이터 fallback 모델(신뢰 낮음)"
+        lines.append(
+            f"ML 예상 동종업종 점포당 월매출(모델 추정치, {source_note})={ml['predicted_monthly_sales']:,}만원, "
+            f"data_completeness={ml.get('data_completeness')}"
+        )
+    if observed.get("status") == "ok":
+        lines.append(
+            "실제 관측 상권지표(모델 추정 아님, 실측값)="
+            f"폐업률 {observed.get('close_rate')}%, 개업률 {observed.get('open_rate')}%, "
+            f"전년동기매출YoY {observed.get('sales_yoy')}%, 평균영업기간 {observed.get('avg_open_months')}개월, "
+            f"매출추세 {observed.get('sales_trend')}"
+        )
+    fund_priority = (c.get("policy_rag") or {}).get("fund_priority")
+    if fund_priority == "low":
+        lines.append("정책자금 우선도=낮음 (자기자금으로 초기비용 충당 가능, 시설/운전자금 참고용)")
     lines.append("정책 RAG:\n" + _policy_context_block(c))
     checks = _deterministic_important_checks(c)
     lines.append("반드시 반영할 확인사항: " + ("; ".join(checks) if checks else "없음"))
+    ranking = facts.get("ranking") or {}
+    reason = (ranking.get("reasons") or {}).get(c["site_id"], {})
+    lines.append(
+        f"[결정된 순위 근거 — 재판단 금지] 전체 순위={ranking.get('ranking')}, "
+        f"추천={ranking.get('recommended_candidate')}, 신뢰도={ranking.get('confidence')}, "
+        f"이 후보 사업성 충족={reason.get('viable')}, 목표회수기간 충족={reason.get('meets_recovery_target')}, "
+        f"매출여유율={reason.get('sales_buffer_ratio')}, 매출여유율 순위={reason.get('sales_buffer_rank')}위 "
+        "(순위는 매출여유율 하나만으로 정렬한 값이며, 동률일 때만 추가필요자금·ML안정성·정책활용도 순으로 tie-break함)"
+    )
     return "\n".join(lines)
 
 
@@ -416,37 +490,49 @@ def _reconcile_policy_summary(items: List[PolicySummaryItem], results: List[dict
 def _generate_batch_explanation(facts: dict) -> tuple[dict, float]:
     """One LLM call for A/B/C, instead of candidate-by-candidate + comparison calls."""
     started = time.perf_counter()
-    from crewai import Agent, Crew, Process, Task
+    from crewai import LLM, Agent, Crew, Process, Task
 
     contexts = "\n\n===== 후보 구분 =====\n\n".join(_candidate_context(facts, c) for c in facts["candidates"])
+    ranking = facts.get("ranking") or {}
     agent = Agent(
         role="매장 이전 경제성 설명가",
-        goal="Rule Engine, ML 추정, 검색된 정책 RAG 근거만 사용해 후보별 차이를 설명한다.",
+        goal="Rule Engine, ML 추정, 검색된 정책 RAG 근거, 그리고 이미 결정된 후보 순위만 사용해 숫자 사이의 관계를 설명한다.",
         backstory=(
             "숫자와 공공정책 근거를 사장님의 언어로 번역한다. 계산값을 수정하지 않고, 검색되지 않은 정책을 만들지 않는다. "
-            "지원 가능성이나 이전 추천을 확정하지 않는다. 자발/비자발이라는 표현을 사용하지 않는다."
+            "지원 가능성이나 이전 추천을 확정하지 않는다. 자발/비자발이라는 표현을 사용하지 않는다. "
+            "이미 계산된 후보 순위를 재판단하거나 뒤집지 않는다 — 그 순서가 왜 나왔는지만 숫자로 설명한다."
         ),
-        llm=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"),
+        llm=LLM(model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini"), temperature=0.2),
         verbose=False,
     )
-    task = Task(
-        description=f"""
-아래 후보 A/B/C 데이터는 이미 계산·검색이 끝난 근거입니다.
+    description = f"""
+아래 후보 A/B/C 데이터는 이미 계산·검색이 끝난 근거이며, 순위도 이미 결정되어 있습니다.
+
+전체 순위(변경 불가)={ranking.get('ranking')}, 추천 후보(변경 불가)={ranking.get('recommended_candidate')}, 신뢰도={ranking.get('confidence')}
 
 {contexts}
 
 작성 규칙:
 1) candidates 배열에 실제 후보 수만큼 정확히 작성하고 candidate_id를 그대로 유지한다.
 2) financial_summary의 additional_fund_needed와 required_retention은 위 숫자를 그대로 옮긴다.
-3) policy_summary는 해당 후보의 '정책 RAG'에 나온 정책만 최대 4개 사용한다. 없는 정책/금리/한도/조건을 만들지 않는다.
+3) policy_summary는 해당 후보의 '정책 RAG'에 나온 정책만 최대 3개 사용한다. 없는 정책/금리/한도/조건을 만들지 않는다.
 4) growth_opportunity는 '현재보다 반복비용을 더 부담할 만큼 성장 가능성이 있는지' 관점으로 설명한다.
 5) cost_recovery는 '비용 구조 안정과 이전비 회수 가능성' 관점으로 설명한다.
-6) ML은 추정치라고 명시하며 Rule Engine 확정값과 섞어 재계산하지 않는다.
+6) ML(예상 동종업종 점포당 월매출)은 모델 추정치라고 명시하며 Rule Engine 확정값과 섞어 재계산하지 않는다.
+6-1) "실제 관측 상권지표"(폐업률/개업률/YoY/평균영업기간/매출추세)는 모델 예측이 아니라 실측값이다. 이 둘을 절대 혼동하거나 같은 것처럼 쓰지 않는다.
+6-2) "폐업확률"이라는 표현을 쓰지 않는다. 실제 관측 폐업률을 말할 때는 "실측 폐업률"이라고 명확히 쓴다.
 7) '지원받을 수 있다/신청 가능하다/전액 충당된다' 같은 확정 표현 금지. 자격·출처·신청상태 불명확 시 확인 필요라고 쓴다.
 8) 자발/비자발, STAY_VS_MOVE, MOVE_VS_MOVE 표현 금지.
-9) comparison_text는 순위/종합점수 없이 후보 차이만 3~5문장으로 설명한다.
-""",
-        expected_output="후보별 구조화 설명과 순위 없는 comparison_text",
+9) 위에 주어진 전체 순위/추천 후보를 그대로 받아들이고 재판단하지 않는다. 다른 후보를 추천하거나 순서를 암시적으로 바꾸는 문장을 쓰지 않는다.
+10) 각 후보는 "숫자를 다시 읽어주는 문장"이 아니라 "숫자 사이의 관계"를 설명한다 (예: 예상매출이 최소필요매출을 얼마나/몇 % 상회하는지, 그 여유폭이 위험한 수준인지).
+11) one_line_summary는 해당 후보를 한 문장으로 압축한 결론. strengths/risks는 각각 1~3개, 반드시 구체적 수치를 포함한다. decision_condition은 "이 후보를 선택하려면 무엇이 유지/충족돼야 하는가"를 구체적으로 쓴다.
+12) important_checks는 정책 eligibility/신청상태가 불확실할 때만 채우고, 확정된 사실을 재확인 필요라고 쓰지 않는다.
+13) overall.headline은 결론 한 문장, overall.reason은 왜 그 순위인지 숫자 근거 포함 2~3문장, overall.main_risk는 추천 후보의 가장 큰 리스크 1개(장점만 말하지 않는다).
+14) comparison_text는 순위를 다시 설명하지 말고, 후보 간 실제 수치 차이(최소 2개 이상)를 근거로 3~5문장으로 설명한다.
+"""
+    task = Task(
+        description=description,
+        expected_output="후보별 구조화 설명(one_line_summary/strengths/risks/decision_condition 포함)과 overall 요약, 순위를 재판단하지 않는 comparison_text",
         agent=agent,
         output_pydantic=BatchExplanation,
     )
@@ -477,9 +563,64 @@ def _generate_batch_explanation(facts: dict) -> tuple[dict, float]:
             "policy_summary": _reconcile_policy_summary(p.policy_summary, (c.get("policy_rag") or {}).get("results", [])),
             "candidate_interpretation": p.candidate_interpretation,
             "important_checks": checks[:8],
+            "one_line_summary": p.one_line_summary,
+            "strengths": p.strengths[:3],
+            "risks": p.risks[:3],
+            "decision_condition": p.decision_condition,
             "mode": "llm",
         }
-    return {"explanations": explanations, "comparison_text": parsed.comparison_text}, time.perf_counter() - started
+    # ranking/recommended_candidate are never read from the LLM output — BatchExplanation's
+    # schema has no such field, so this is enforced by construction, not a post-hoc filter.
+    overall = {
+        "headline": parsed.overall.headline,
+        "reason": parsed.overall.reason,
+        "main_risk": parsed.overall.main_risk,
+        "ranking": ranking.get("ranking"),
+        "recommended_candidate": ranking.get("recommended_candidate"),
+        "confidence": ranking.get("confidence"),
+    }
+    performance_extra = {"prompt_chars": len(description)}
+    return {
+        "explanations": explanations,
+        "comparison_text": parsed.comparison_text,
+        "overall": overall,
+        "performance_extra": performance_extra,
+    }, time.perf_counter() - started
+
+
+def explain_facts(facts: dict) -> tuple[dict, float]:
+    """AI 설명 단계만 실행한다 — Rule/ML/RAG 계산(analyze())과 분리되어 있어
+
+    /staymove(explain=true)와 /staymove/explain(2단계 호출) 양쪽에서 재사용된다.
+    반환 shape은 항상 {explanations, comparison_text, overall, performance_extra, explain_mode, explain_error?}
+    로 통일해 호출부가 LLM 성공/비활성/실패를 분기 없이 동일하게 다룰 수 있게 한다.
+    """
+    ranking = facts.get("ranking") or {}
+    fallback_overall = {
+        "headline": "", "reason": "", "main_risk": "",
+        "ranking": ranking.get("ranking"), "recommended_candidate": ranking.get("recommended_candidate"),
+        "confidence": ranking.get("confidence"),
+    }
+    enable_llm = os.getenv("ENABLE_LLM_EXPLANATION", "true").strip().lower() != "false"
+    has_key = bool(os.getenv("OPENAI_API_KEY"))
+    if not enable_llm or not has_key:
+        explanations = {c["site_id"]: _fallback_candidate_explanation(c) for c in facts["candidates"]}
+        return {
+            "explanations": explanations, "comparison_text": None, "overall": fallback_overall,
+            "performance_extra": {}, "explain_mode": "disabled",
+        }, 0.0
+
+    try:
+        batch, llm_seconds = _generate_batch_explanation(facts)
+        batch["explain_mode"] = "llm_single_call"
+        return batch, llm_seconds
+    except Exception as exc:
+        logger.exception("통합 AI 설명 생성 실패")
+        explanations = {c["site_id"]: _fallback_candidate_explanation(c, failed=True) for c in facts["candidates"]}
+        return {
+            "explanations": explanations, "comparison_text": None, "overall": fallback_overall,
+            "performance_extra": {}, "explain_mode": "rule_ml_rag_fallback", "explain_error": str(exc)[:300],
+        }, 0.0
 
 
 def run(payload: dict, explain: bool = True, use_rag: bool = True, use_ml: bool = True) -> dict:
@@ -489,34 +630,18 @@ def run(payload: dict, explain: bool = True, use_rag: bool = True, use_ml: bool 
         facts["performance"]["total_seconds"] = round(time.perf_counter() - total_started, 3)
         return facts
 
-    enable_llm = os.getenv("ENABLE_LLM_EXPLANATION", "true").strip().lower() != "false"
-    has_key = bool(os.getenv("OPENAI_API_KEY"))
-    if not enable_llm or not has_key:
-        facts["explain_mode"] = "disabled"
-        facts["comparison_summary"] = None
-        for c in facts["candidates"]:
-            c["ai_explanation"] = _fallback_candidate_explanation(c)
-        facts["explanation_markdown"] = "\n\n".join(c["ai_explanation"]["candidate_interpretation"] for c in facts["candidates"])
-        facts["performance"]["total_seconds"] = round(time.perf_counter() - total_started, 3)
-        return facts
-
-    try:
-        batch, llm_seconds = _generate_batch_explanation(facts)
-        for c in facts["candidates"]:
-            c["ai_explanation"] = batch["explanations"][c["site_id"]]
-        facts["comparison_summary"] = batch["comparison_text"] or None
-        facts["explanation_markdown"] = "\n\n".join(c["ai_explanation"]["candidate_interpretation"] for c in facts["candidates"])
-        facts["explain_mode"] = "llm_single_call"
-        facts["performance"]["llm_seconds"] = round(llm_seconds, 3)
-        facts["performance"]["llm_calls"] = 1
-    except Exception as exc:
-        logger.exception("통합 AI 설명 생성 실패")
-        facts["explain_mode"] = "rule_ml_rag_fallback"
-        facts["explain_error"] = str(exc)[:300]
-        facts["comparison_summary"] = None
-        for c in facts["candidates"]:
-            c["ai_explanation"] = _fallback_candidate_explanation(c, failed=True)
-        facts["explanation_markdown"] = "\n\n".join(c["ai_explanation"]["candidate_interpretation"] for c in facts["candidates"])
+    batch, llm_seconds = explain_facts(facts)
+    for c in facts["candidates"]:
+        c["ai_explanation"] = batch["explanations"][c["site_id"]]
+    facts["comparison_summary"] = batch["comparison_text"]
+    facts["overall"] = batch["overall"]
+    facts["explanation_markdown"] = "\n\n".join(c["ai_explanation"]["candidate_interpretation"] for c in facts["candidates"])
+    facts["explain_mode"] = batch["explain_mode"]
+    if "explain_error" in batch:
+        facts["explain_error"] = batch["explain_error"]
+    facts["performance"]["llm_seconds"] = round(llm_seconds, 3)
+    facts["performance"]["llm_calls"] = 1 if batch["explain_mode"] == "llm_single_call" else 0
+    facts["performance"].update(batch.get("performance_extra") or {})
     facts["performance"]["total_seconds"] = round(time.perf_counter() - total_started, 3)
     return facts
 

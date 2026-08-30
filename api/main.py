@@ -10,6 +10,8 @@ from __future__ import annotations
 from typing import Any, List, Optional
 import logging
 import os
+import time
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -140,14 +142,35 @@ def health():
 
 
 # ── Stay or Move: 계산 + 자연어 설명 (핵심 엔드포인트) ──
+_ANALYSIS_CACHE: dict[str, tuple[float, dict]] = {}
+_ANALYSIS_CACHE_TTL_SECONDS = 600
+
+
+def _purge_expired_analysis_cache() -> None:
+    now = time.time()
+    expired = [key for key, (saved_at, _) in _ANALYSIS_CACHE.items() if now - saved_at > _ANALYSIS_CACHE_TTL_SECONDS]
+    for key in expired:
+        _ANALYSIS_CACHE.pop(key, None)
+
+
 @app.post("/staymove")
 def staymove_endpoint(payload: dict, explain: bool = True, use_rag: bool = True, use_ml: bool = True):
     """현재 매장 + 후보 계약조건 → Rule + ML + 후보별 Policy RAG + 선택적 AI 설명.
 
-    explain=false 이면 외부 LLM API 호출 없이 빠르게 구조화 결과만 반환한다.
+    explain=false 이면 외부 LLM API 호출 없이 빠르게 구조화 결과만 반환하고, 이 결과를
+    서버 메모리에 잠시 캐시해 `/staymove/explain`이 이어서 AI 설명만 비동기로 붙일 수 있게 한다
+    (체감속도 개선을 위한 2단계 호출 — 클라이언트가 계산값을 그대로 되돌려보내 LLM 프롬프트에
+    주입하는 방식은 프롬프트 인젝션 표면이 되므로 쓰지 않는다).
+    explain=true(기존 단일호출 경로)는 그대로 동작한다.
     """
     try:
-        return staymove.run(payload, explain=explain, use_rag=use_rag, use_ml=use_ml)
+        result = staymove.run(payload, explain=explain, use_rag=use_rag, use_ml=use_ml)
+        if not explain:
+            _purge_expired_analysis_cache()
+            analysis_id = uuid.uuid4().hex
+            _ANALYSIS_CACHE[analysis_id] = (time.time(), result)
+            result = {**result, "analysis_id": analysis_id}
+        return result
     except ValueError as e:
         # Rule Engine의 입력값 검증 오류 — 이미 사용자에게 보여줄 수 있는 한국어 문구.
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -155,6 +178,42 @@ def staymove_endpoint(payload: dict, explain: bool = True, use_rag: bool = True,
         # 예상하지 못한 오류는 원인을 화면에 노출하지 않고 서버 로그로만 남긴다.
         logging.exception("분석 서버 오류")
         raise HTTPException(status_code=500, detail="분석 서버 연결을 확인해주세요.") from e
+
+
+class ExplainRequest(BaseModel):
+    analysis_id: str
+
+
+@app.post("/staymove/explain")
+def staymove_explain(req: ExplainRequest):
+    """1단계(`/staymove?explain=false`)에서 캐시된 계산 결과에 AI 설명만 비동기로 붙인다.
+
+    캐시가 없거나 만료되었으면 410을 반환한다 — 클라이언트가 보낸 값으로 대신 계산하는
+    fallback은 두지 않는다(그 fallback 자체가 이 캐시 방식을 쓰는 이유를 무력화한다).
+    """
+    _purge_expired_analysis_cache()
+    cached = _ANALYSIS_CACHE.get(req.analysis_id)
+    if not cached:
+        raise HTTPException(status_code=410, detail="분석 결과가 만료되었습니다. 다시 분석해주세요.")
+    _, facts = cached
+    try:
+        batch, llm_seconds = staymove.explain_facts(facts)
+    except Exception as e:  # noqa: BLE001
+        logging.exception("AI 설명 생성 실패")
+        raise HTTPException(status_code=500, detail="AI 설명을 생성하지 못했습니다.") from e
+    return {
+        "candidates": [
+            {"site_id": site_id, "ai_explanation": explanation}
+            for site_id, explanation in batch["explanations"].items()
+        ],
+        "comparison_summary": batch["comparison_text"] or None,
+        "overall": batch["overall"],
+        "performance": {
+            "llm_seconds": round(llm_seconds, 3),
+            "llm_calls": 1,
+            **(batch.get("performance_extra") or {}),
+        },
+    }
 
 
 # ── 주소 → 좌표 (NAVER Geocoding) ──
