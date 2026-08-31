@@ -3,11 +3,16 @@ import QuestionLayout from "../components/QuestionLayout.jsx";
 import Prefill from "../components/Prefill.jsx";
 import ChipRow from "../components/ChipRow.jsx";
 import { money } from "../logic.js";
+import { useClearedError } from "../useClearedError.js";
 
 export default function FixedStep({ current, prefillScenario, onNext }) {
   const [rent, setRent] = useState(current.rent ?? "");
   const [labor, setLabor] = useState(current.labor ?? "");
   const [mgmt, setMgmt] = useState(current.mgmt ?? "");
+
+  const rentError = useClearedError(rent !== "");
+  const laborError = useClearedError(labor !== "");
+  const mgmtError = useClearedError(mgmt !== "");
 
   const total = (Number(rent) || 0) + (Number(labor) || 0) + (Number(mgmt) || 0);
   // 다른 단계와 같은 규칙: 세 칸이 모두 채워져야 다음으로.
@@ -34,7 +39,7 @@ export default function FixedStep({ current, prefillScenario, onNext }) {
           <div className="field-block-head">
             <span className="field-block-label">월세</span>
           </div>
-          <div className="input-line">
+          <div className={"input-line" + (rentError ? " error" : "")}>
             <input type="number" min="0" value={rent} onChange={e => setRent(e.target.value)} placeholder="0" />
             <span className="unit">만원</span>
           </div>
@@ -45,7 +50,7 @@ export default function FixedStep({ current, prefillScenario, onNext }) {
           <div className="field-block-head">
             <span className="field-block-label">고정 인건비</span>
           </div>
-          <div className="input-line">
+          <div className={"input-line" + (laborError ? " error" : "")}>
             <input type="number" min="0" value={labor} onChange={e => setLabor(e.target.value)} placeholder="0" />
             <span className="unit">만원</span>
           </div>
@@ -56,7 +61,7 @@ export default function FixedStep({ current, prefillScenario, onNext }) {
           <div className="field-block-head">
             <span className="field-block-label">관리비</span>
           </div>
-          <div className="input-line">
+          <div className={"input-line" + (mgmtError ? " error" : "")}>
             <input type="number" min="0" value={mgmt} onChange={e => setMgmt(e.target.value)} placeholder="0" />
             <span className="unit">만원</span>
           </div>

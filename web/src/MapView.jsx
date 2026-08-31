@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { loadNaverMaps } from "./naverMap";
 
 const KEY_ID = import.meta.env.VITE_NCP_MAP_KEY_ID;
-const COLORS = { current: "#111111", A: "#ff5c35", B: "#2357ff", C: "#7d5cff" };
+// ResultScreen의 SITE_COLOR와 같은 명도 램프.
+// 밝은 채움 위에는 흰 글씨가 안 읽혀서 글자색을 짝으로 둔다.
+const COLORS = { current: "#121619", A: "#046B36", B: "#02C551", C: "#8CDCB0" };
+const INK = { current: "#fff", A: "#fff", B: "#062B16", C: "#062B16" };
 
 export default function MapView({ current, candidates = [], selectedId = null, activeKey = null, showBoundaries = false, onMapClick }) {
   const elRef = useRef(null);
@@ -69,12 +72,13 @@ export default function MapView({ current, candidates = [], selectedId = null, a
   function addMarker(naver, map, item, key, selected, bounds, points) {
     if (!Number.isFinite(Number(item?.lat)) || !Number.isFinite(Number(item?.lng))) return;
     const pos = new naver.maps.LatLng(Number(item.lat), Number(item.lng));
-    const color = COLORS[key] || "#666";
+    const color = COLORS[key] || "#5b6168";
+    const ink = INK[key] || "#fff";
     const label = key === "current" ? "현재" : key;
     bounds.extend(pos);
     points.push(pos);
 
-    const html = `<div style="display:flex;align-items:center;gap:7px;padding:6px 10px 6px 6px;background:#fff;border:1px solid rgba(17,17,17,.18);border-radius:999px;box-shadow:0 10px 28px rgba(0,0,0,.15);font:800 11px -apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif;white-space:nowrap;${selected ? `outline:4px solid ${color}25;` : ""}"><span style="display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:${color};color:#fff;font-size:9px">${label}</span><span style="max-width:145px;overflow:hidden;text-overflow:ellipsis;color:#111">${escapeHtml(item.label || "위치")}</span></div>`;
+    const html = `<div style="display:flex;align-items:center;gap:7px;padding:6px 10px 6px 6px;background:#fff;border:1px solid rgba(17,17,17,.18);border-radius:999px;box-shadow:0 10px 28px rgba(0,0,0,.15);font:800 11px 'Pretendard Variable',Pretendard,-apple-system,BlinkMacSystemFont,sans-serif;white-space:nowrap;${selected ? `outline:4px solid ${color}25;` : ""}"><span style="display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:${color};color:${ink};font-size:9px">${label}</span><span style="max-width:145px;overflow:hidden;text-overflow:ellipsis;color:#121619">${escapeHtml(item.label || "위치")}</span></div>`;
     const marker = new naver.maps.Marker({ map, position: pos, zIndex: selected ? 300 : 180, icon: { content: html, anchor: new naver.maps.Point(18, 18) } });
     overlaysRef.current.push(marker);
     if (showBoundaries && item.boundary) drawBoundary(naver, map, item.boundary, color, selected);

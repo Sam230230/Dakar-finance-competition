@@ -13,6 +13,7 @@ import LoadingScreen from "./onboarding/steps/LoadingScreen.jsx";
 import { blankState, scenario, labels, toStayMovePayload } from "./onboarding/logic.js";
 import "./styles.css";
 import "./onboarding/onboarding.css";
+import "./result/result.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8001";
 
@@ -46,10 +47,8 @@ export default function App() {
   function push(step, payload = {}) {
     setHistory(h => [...h, { step, payload }]);
   }
-  function back() {
-    setHistory(h => (h.length <= 1 ? h : h.slice(0, -1)));
-  }
   // 프리뷰 체크리스트에서 이미 답한 단계를 눌러 그 단계로 바로 돌아가기.
+  // 이전 버튼을 없앴으므로 되돌아가는 경로는 이것 하나다(시작 화면 포함).
   // 해당 단계가 처음 등장한 지점까지 히스토리를 되감으므로, 뒤 단계 입력값은
   // state에 그대로 남아 다시 진행할 때 프리필로 재사용된다.
   function goToStep(targetCur) {
@@ -186,7 +185,6 @@ export default function App() {
 
   const meta = STEP_META[cur.step] || {};
   const stepKey = cur.step + JSON.stringify(cur.payload);
-  const showBack = history.length > 1;
 
   // 시작(시나리오 선택) 화면은 아직 정리해서 보여줄 데이터가 없어 단일 컬럼을 쓰되,
   // 상단 진행바는 다른 단계와 같은 전체폭 형식으로 맞춘다
@@ -218,9 +216,6 @@ export default function App() {
         <LiveSummaryPanel
           data={data}
           cur={stepCur}
-          total={TOTAL_STEPS}
-          showBack={showBack}
-          onBack={back}
           onJump={goToStep}
         />
         <main className="stage">

@@ -1,4 +1,6 @@
+import { Fragment, useState } from "react";
 import {
+  Flag,
   MapPin,
   TrendingUp,
   Receipt,
@@ -6,12 +8,14 @@ import {
   Wallet,
   Map,
   CircleCheckBig,
-  ChevronLeft
+  RotateCcw,
+  X
 } from "lucide-react";
 import { money } from "../logic.js";
 
 // 단계마다 무엇을 묻는지 형태로 먼저 읽히도록 하는 아이콘
 const STEP_ICON = {
+  0: Flag,
   1: MapPin,
   2: TrendingUp,
   3: Receipt,
@@ -59,6 +63,8 @@ function buildItems(data) {
   const candidateDoneCount = data.candidates.filter(c => (c.address || "").trim() !== "").length;
 
   return [
+    // 이전 버튼을 없앴으므로 시작 화면 복귀는 이 항목이 맡는다
+    { cur: 0, label: "시작", value: data.demoScenario ? `시나리오 ${data.demoScenario}` : "직접 입력" },
     { cur: 1, label: "현재 매장 위치", value: data.current.address || null },
     { cur: 2, label: "월평균 매출", value: data.current.sales != null ? money(data.current.sales) : null },
     { cur: 3, label: "월 변동비", value: data.current.variable != null ? money(data.current.variable) : null },
@@ -67,7 +73,7 @@ function buildItems(data) {
     {
       cur: 6,
       label: "후보지",
-      value: candidateDoneCount > 0 ? data.candidates.map(c => c.address).filter(Boolean).join(" · ") : null
+      value: candidateDoneCount > 0 ? data.candidates.map(c => c.address).filter(Boolean).join(", ") : null
     },
     { cur: 7, label: "결과 확인", value: null }
   ];
@@ -139,31 +145,28 @@ function LiveMetric({ data, cur }) {
   );
 }
 
-export default function LiveSummaryPanel({ data, cur, total = 7, showBack, onBack, onJump }) {
+export default function LiveSummaryPanel({ data, cur, onJump }) {
   const items = buildItems(data);
   const why = STEP_WHY[cur];
+
+  // 트랙을 눌러 되돌아갈 수 있다는 첫 안내.
+  // 저장하지 않고 화면 상태로만 두므로 새로고침하면 다시 뜬다(데모용).
+  const [coachOff, setCoachOff] = useState(false);
+  function dismissCoach() {
+    setCoachOff(true);
+  }
+
+  // 안내는 가장 위 "답한 항목" 하나에만 붙인다
+  const firstDone = items.find(item => item.cur < cur);
 
   return (
     <aside className="panel">
       <div className="panel-top">
         <span className="panel-brand">Stay or Move</span>
-        <span className="panel-stepno">
-          {cur}/{total}
-        </span>
       </div>
-
-      <button
-        className="panel-back"
-        style={{ visibility: showBack ? "visible" : "hidden" }}
-        onClick={onBack}
-      >
-        <ChevronLeft size={18} strokeWidth={2.4} aria-hidden="true" />
-        이전
-      </button>
 
       {why && (
         <div className="step-why">
-          <div className="step-why-label">이 답변으로 준비하는 것</div>
           <p className="step-why-title">{why.title}</p>
           <p className="step-why-body">{why.body}</p>
         </div>
@@ -173,35 +176,56 @@ export default function LiveSummaryPanel({ data, cur, total = 7, showBack, onBac
         {items.map(item => {
           const state = item.cur < cur ? "done" : item.cur === cur ? "active" : "pending";
           const Icon = STEP_ICON[item.cur];
-          const node = (
-            <span className="track-node" aria-hidden="true">
-              <Icon size={15} strokeWidth={2.2} />
-            </span>
-          );
 
-          // 이미 답한 단계는 눌러서 그 단계로 바로 돌아갈 수 있음
+          // 이미 답한 단계는 눌러서 그 단계로 바로 돌아갈 수 있음.
+          // 아이콘이 되돌리기로 바뀌어, 되돌아갈 수 있다는 걸 형태로 알린다.
           if (state === "done") {
+            const showCoach = !coachOff && firstDone && item.cur === firstDone.cur;
             return (
-              <button
-                type="button"
-                className="track-item done jumpable"
-                key={item.cur}
-                onClick={() => onJump(item.cur)}
-                title={`${item.label} 단계로 돌아가기`}
-              >
-                {node}
-                <span className="track-label">{item.label}</span>
-                <span className="track-value">
-                  {item.value || "-"}
-                  <span className="track-jump-hint">수정</span>
-                </span>
-              </button>
+              <Fragment key={item.cur}>
+                <button
+                  type="button"
+                  className="track-item done jumpable"
+                  onClick={() => {
+                    dismissCoach();
+                    onJump(item.cur);
+                  }}
+                  title={`${item.label} 단계로 돌아가기`}
+                  aria-label={`${item.label} 단계로 돌아가기`}
+                >
+                  <span className="track-node" aria-hidden="true">
+                    <Icon className="node-base" size={15} strokeWidth={2.2} />
+                    <RotateCcw className="node-alt" size={15} strokeWidth={2.4} />
+                  </span>
+                  <span className="track-label">{item.label}</span>
+                  <span className="track-value">{item.value || "-"}</span>
+                </button>
+
+                {showCoach && (
+                  <div className="track-coach" role="note">
+                    <span>
+                      아이콘을 눌러 <b>이 단계로 돌아갈 수 있어요</b>
+                    </span>
+                    <button
+                      type="button"
+                      className="track-coach-close"
+                      onClick={dismissCoach}
+                      title="다시 보지 않기"
+                      aria-label="안내 끄기"
+                    >
+                      <X size={15} strokeWidth={2.4} aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
+              </Fragment>
             );
           }
 
           return (
             <div className={"track-item " + state} key={item.cur}>
-              {node}
+              <span className="track-node" aria-hidden="true">
+                <Icon size={15} strokeWidth={2.2} />
+              </span>
               <span className="track-label">{item.label}</span>
               {state === "active" && (
                 <span className="track-value">

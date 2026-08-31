@@ -1,15 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import MapView from "./MapView";
+import CandidateCarousel from "./result/CandidateCarousel";
 import {
   money, signed,
   salesBufferLine, monthlyCostDeltaLine, capitalLine, recoveryTargetLine,
   relativeToBestOtherLine, recoveryRelevanceLabel, fundPriorityLine,
 } from "./insights";
 
-const SITE_COLOR = { current: "#111111", A: "#ff5c35", B: "#2357ff", C: "#7d5cff" };
+// 후보 식별색. 색상이 아니라 "명도"로 구분한다 — 색약에서도 밝기로 갈린다.
+// 명도 0.8 / 10.8 / 40.5 / 59.9 로 벌려놨다.
+const SITE_COLOR = { current: "#121619", A: "#046B36", B: "#02C551", C: "#8CDCB0" };
 
 function modeLabel(mode) {
-  return mode === "growth_opportunity" ? "성장·기회 관점" : "비용·회복 관점";
+  return mode === "growth_opportunity" ? "성장과 기회 관점" : "비용과 회복 관점";
 }
 function statusTone(status) {
   if (status === "접수 중") return "tone-live";
@@ -45,6 +48,31 @@ export default function ResultScreen({ data, places, onRestart, aiState }) {
     [rows]
   );
 
+  // A안 스크롤 스냅. 결과 화면이 언마운트되면 반드시 걷어낸다 —
+  // 남아 있으면 온보딩 스크롤까지 걸린다.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.add("snap-sections");
+
+    // 화면보다 긴 섹션은 스냅에서 뺀다. 걸리면 그 안쪽을 볼 수가 없다.
+    // 후보를 바꾸면 섹션 높이도 바뀌므로 ResizeObserver 로 계속 따라간다.
+    const apply = () => {
+      document.querySelectorAll(".result-page > section").forEach(el => {
+        el.classList.toggle("no-snap", el.getBoundingClientRect().height > window.innerHeight - 40);
+      });
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    const ro = new ResizeObserver(apply);
+    document.querySelectorAll(".result-page > section").forEach(el => ro.observe(el));
+
+    return () => {
+      root.classList.remove("snap-sections");
+      window.removeEventListener("resize", apply);
+      ro.disconnect();
+    };
+  }, []);
+
   const aiFailed = aiState === "error";
   const recommendedReason = ranking.reasons?.[ranking.recommended_candidate] || {};
 
@@ -53,31 +81,36 @@ export default function ResultScreen({ data, places, onRestart, aiState }) {
       <ResultHero
         ranking={ranking} overall={overall} aiFailed={aiFailed}
         recommendedReason={recommendedReason} onRestart={onRestart}
-        selectedId={selectedId} onSelect={setSelectedId}
       />
+
+      <section className="page-width">
+        <div className="section-heading">
+          <div>
+            <h2>후보지를 하나씩 살펴볼게요</h2>
+          </div>
+          <p>옆으로 넘기면 가운데 카드가 바뀌고, 아래 내용도 같이 따라와요</p>
+        </div>
+        <CandidateCarousel rows={rows} ranking={ranking} selectedId={selectedId} onSelect={setSelectedId} />
+      </section>
 
       <SalesComparisonChart rows={rows} />
 
       <ComparisonMatrix rows={rows} />
 
       <section className="page-width">
-        <div className="section-heading"><div><span className="eyebrow">DETAIL</span><h2>선택 후보 상세</h2></div><p>후보를 선택해 조건을 자세히 비교하세요</p></div>
-        <nav className="candidate-tabs">
-          {rows.map((c) => (
-            <button key={c.site_id} className={selectedId === c.site_id ? "active" : ""} onClick={() => setSelectedId(c.site_id)}>
-              <i style={{ background: SITE_COLOR[c.site_id] }} />후보 {c.site_id}
-              <small>{modeLabel(c.analysis_mode)}</small>
-            </button>
-          ))}
-        </nav>
+        <div className="section-heading">
+          <div>
+            <h2>후보 {selectedId} 자세히 보기</h2>
+          </div>
+          <p>{modeLabel(selected.analysis_mode)}으로 봤어요</p>
+        </div>
 
         <div className="result-map-section">
           <div className="map-frame result-map-frame"><MapView current={mapCurrent} candidates={mapCandidates} selectedId={selectedId} showBoundaries /></div>
           <aside className="result-place-card">
-            <span className="eyebrow">LOCATION</span>
             <div className="place-badge" style={{ background: SITE_COLOR[selectedId] }}>{selectedId}</div>
             <h2>{selected.name}</h2>
-            <p>{selected.analysis_mode === "growth_opportunity" ? "현재보다 월 반복비용을 더 부담하면서 옮길 만한 조건인지 봅니다." : "월 비용을 낮추면서 이전비를 얼마나 안정적으로 회수할 수 있는지 봅니다."}</p>
+            <p>{selected.analysis_mode === "growth_opportunity" ? "매달 더 나가는 돈을 감수할 만한 자리인지 봐요." : "매달 나가는 돈을 줄이고, 옮기는 데 쓴 돈을 얼마나 빨리 되찾는지 봐요."}</p>
           </aside>
         </div>
 
@@ -107,7 +140,7 @@ export default function ResultScreen({ data, places, onRestart, aiState }) {
       <AssumptionsAccordion assumptions={data?.assumptions} mlMetrics={selected?.ml?.metrics} />
 
       <section className="page-width result-footer-action">
-        <span>다른 후보를 비교하려면 처음으로 돌아가세요.</span>
+        <span>조건을 바꿔서 다시 보고 싶으면 처음부터 시작할 수 있어요.</span>
         <button type="button" onClick={onRestart}>새 분석 ↗</button>
       </section>
 
@@ -116,17 +149,16 @@ export default function ResultScreen({ data, places, onRestart, aiState }) {
   );
 }
 
-function ResultHero({ ranking, overall, aiFailed, recommendedReason, onRestart, selectedId, onSelect }) {
+function ResultHero({ ranking, overall, aiFailed, recommendedReason, onRestart }) {
   const conditional = ranking.confidence === "conditional";
   const allBelowThreshold = !!ranking.all_below_threshold;
   // 전원 미달일 때는 LLM 헤드라인도 무시하고 강하게 확정하지 않는 문구로 고정한다.
   const headline = allBelowThreshold
-    ? "현재 조건에서는 모든 후보가 최소 사업성 기준에 미치지 못합니다."
+    ? "지금 조건으로는 세 곳 다 기준에 못 미쳐요."
     : overall?.headline || (conditional
-        ? `현재 조건에서는 후보 ${ranking.recommended_candidate}가 상대적으로 유리합니다.`
-        : `후보 ${ranking.recommended_candidate}가 가장 유리합니다.`);
-  const subline = allBelowThreshold ? `후보 ${ranking.recommended_candidate}가 상대적으로 기준에 가장 가깝습니다.` : null;
-  const rankLabel = (i) => (allBelowThreshold ? `상대적 ${i + 1}순위` : `${i + 1}순위`);
+        ? `지금 조건에서는 후보 ${ranking.recommended_candidate}가 그나마 나은 편이에요.`
+        : `계산 결과로는 후보 ${ranking.recommended_candidate} 조건이 가장 좋아요.`);
+  const subline = allBelowThreshold ? `그중에서는 후보 ${ranking.recommended_candidate}가 기준에 가장 가까워요.` : null;
 
   // 값의 실제 부호에 맞는 문구/아이콘 — "-6.4% 여유"처럼 부호를 무시하고 항상 긍정으로
   // 표시하던 버그를 고친다. tone이 "warn"이면 체크가 아니라 주의 아이콘으로 렌더링한다.
@@ -152,31 +184,23 @@ function ResultHero({ ranking, overall, aiFailed, recommendedReason, onRestart, 
     <section className="result-hero page-width">
       <div className="result-hero-top">
         <div>
-          <span className="eyebrow">분석 완료</span>
           <h1 className="result-title-sentence">{headline}</h1>
           {subline && <p className="result-conditional-note">{subline}</p>}
-          {!allBelowThreshold && conditional && <p className="result-conditional-note">모든 후보가 최소 조건을 완전히 충족하지는 않아 조건부 비교 결과입니다.</p>}
+          {!allBelowThreshold && conditional && <p className="result-conditional-note">세 곳 다 최소 조건을 완전히 채우지는 못해서, 조건을 붙여 비교한 결과예요.</p>}
+          {/* 돈이 걸린 판단이라 조건부라는 사실을 항상 남겨둔다.
+              AI 헤드라인이 단정적으로 나올 수 있어 더 필요하다. */}
+          <p className="result-conditional-note">
+            입력하신 값으로 계산한 결과예요. 실제 계약 조건이나 매출은 달라질 수 있으니 결정 전에 다시 확인해 주세요.
+          </p>
         </div>
         <button type="button" className="micro-button" onClick={onRestart}>다시 분석</button>
       </div>
-      <nav className="rank-badges" aria-label="후보 순위 · 선택해서 아래 상세 보기">
-        {ranking.ranking.map((siteId, i) => (
-          <button
-            key={siteId}
-            type="button"
-            className={`rank-badge${i === 0 ? " rank-1" : ""}${selectedId === siteId ? " is-selected" : ""}`}
-            onClick={() => onSelect(siteId)}
-          >
-            <i style={{ background: SITE_COLOR[siteId] }} />{rankLabel(i)} · 후보 {siteId}
-          </button>
-        ))}
-      </nav>
       {checks.length > 0 && (
         <ul className="hero-checks">{checks.map((c, i) => <li key={i} className={c.tone === "warn" ? "is-warn" : ""}>{c.tone === "warn" ? "⚠" : "✓"} {c.text}</li>)}</ul>
       )}
       {(aiFailed || overall?.main_risk) && (
         <p className="hero-risk">
-          {aiFailed ? "AI 해석을 불러오지 못했습니다. 계산·검색 결과만 표시합니다." : `⚠ ${overall.main_risk}`}
+          {aiFailed ? "AI 해석을 불러오지 못했어요. 계산과 검색 결과만 보여드려요." : `⚠ ${overall.main_risk}`}
         </p>
       )}
     </section>
@@ -203,7 +227,7 @@ const COMPARE_ROWS = [
   { label: "추가 필요 이전자금", render: (c) => `${money(c.additional_fund_needed)}만원`, sub: (c) => capitalLine(c.initial_capital, c.additional_fund_needed) },
   {
     label: "목표 회수기간",
-    render: (c) => c.target_months != null ? `${c.target_months}개월 · ${recoveryRelevanceLabel(c.recovery_relevance)}` : "-",
+    render: (c) => c.target_months != null ? `${c.target_months}개월, ${recoveryRelevanceLabel(c.recovery_relevance)}` : "-",
   },
   { label: "최근 폐업률(실측)", render: (c) => c.market_observed?.close_rate != null ? `${c.market_observed.close_rate}%` : "확인 불가" },
   { label: "자치구 매출 추세(실측)", render: (c) => c.market_observed?.sales_trend ? `${c.market_observed.sales_trend}${c.market_observed.sales_trend_pct != null ? ` (${signed(c.market_observed.sales_trend_pct)}%)` : ""}` : "확인 불가" },
@@ -221,7 +245,7 @@ function policyUtilizationLabel(rag) {
   if (direct > 0) parts.push(`직접 활용 후보 ${direct}건`);
   if (needsCheck > 0) parts.push(`조건 확인 ${needsCheck}건`);
   if (historical.length > 0) parts.push(`지난 회차 참고 ${historical.length}건`);
-  return parts.length ? parts.join(" · ") : "확인된 정책금융 없음";
+  return parts.length ? parts.join(", ") : "확인된 정책금융 없음";
 }
 
 /** GRAPH 1 — 최소필요/목표회수/ML예상 매출 그룹 막대. 실제 Rule/ML 값만 사용, 장식 없음. */
@@ -229,9 +253,9 @@ function SalesComparisonChart({ rows }) {
   const withSales = rows.filter((c) => c.min_required_sales != null);
   if (!withSales.length) return null;
   const series = [
-    { key: "min", label: "최소 필요매출", color: "#111111" },
-    { key: "target", label: "목표 회수 필요매출", color: "#7d5cff" },
-    { key: "predicted", label: "ML 예상매출", color: "#2357ff" },
+    { key: "min", label: "최소 필요매출", color: "#121619" },
+    { key: "target", label: "목표 회수 필요매출", color: "#059B47" },
+    { key: "predicted", label: "ML 예상매출", color: "#7FCFA3" },
   ];
   const values = (c) => ({
     min: c.min_required_sales,
@@ -245,9 +269,9 @@ function SalesComparisonChart({ rows }) {
 
   // viewBox 좌표계로 그려서 width:100%로 컨테이너 폭에 정확히 맞춘다 —
   // 남는 여백도, 눈금/숫자 잘림도 생기지 않는다(고정 px 캔버스를 쓰지 않음).
-  const chartH = 200;
-  const marginLeft = 56;
-  const marginTop = 12;
+  const chartH = 300;
+  const marginLeft = 68;
+  const marginTop = 16;
   const marginBottom = 30;
   const barW = 26;
   const groupGap = 40;
@@ -259,8 +283,8 @@ function SalesComparisonChart({ rows }) {
   return (
     <section className="page-width sales-chart-section">
       <div className="section-heading">
-        <div><span className="eyebrow">GRAPH</span><h2>후보별 필요매출 vs ML 예상매출</h2></div>
-        <p>단위: 만원 · Rule Engine 계산값 + ML 추정치(실험적)</p>
+        <div><h2>얼마를 팔아야 하고, 얼마나 팔 것 같은지</h2></div>
+        <p>단위는 만원이에요. Rule Engine 계산값에 ML 추정치를 더했어요(실험적)</p>
       </div>
       <div className="sales-chart-legend">
         {series.map((s) => <span key={s.key}><i style={{ background: s.color }} />{s.label}</span>)}
@@ -273,7 +297,7 @@ function SalesComparisonChart({ rows }) {
             return (
               <g key={t}>
                 <line x1={marginLeft} x2={viewW - 8} y1={y} y2={y} stroke="rgba(17,17,17,.08)" />
-                <text x={marginLeft - 8} y={y + 3} fontSize="10" fill="#6f706c" textAnchor="end">{money(Math.round(maxValue * t))}만</text>
+                <text x={marginLeft - 8} y={y + 3} fontSize="13" fill="#5b6168" textAnchor="end">{money(Math.round(maxValue * t))}만</text>
               </g>
             );
           })}
@@ -288,11 +312,11 @@ function SalesComparisonChart({ rows }) {
                   const h = (val / maxValue) * chartH;
                   return (
                     <rect key={s.key} x={gx + si * barW} y={marginTop + chartH - h} width={barW - 4} height={h} fill={s.color} rx="3">
-                      <title>{`후보 ${c.site_id} · ${s.label}: ${money(val)}만원`}</title>
+                      <title>{`후보 ${c.site_id} ${s.label}: ${money(val)}만원`}</title>
                     </rect>
                   );
                 })}
-                <text x={gx + groupW / 2 - 5} y={marginTop + chartH + 22} fontSize="13" fontWeight="800" textAnchor="middle" fill="#111">{c.site_id}</text>
+                <text x={gx + groupW / 2 - 5} y={marginTop + chartH + 26} fontSize="16" fontWeight="800" textAnchor="middle" fill="#121619">{c.site_id}</text>
               </g>
             );
           })}
@@ -306,7 +330,7 @@ function SalesComparisonChart({ rows }) {
  * 시계열임을 라벨에 명시한다(상권 단위 다분기 매출 데이터가 없어 대체할 수 없음). */
 function DistrictSalesHistoryChart({ history, grain }) {
   if (!history || history.length < 2) return null;
-  const w = 640, h = 160, margin = { left: 56, right: 16, top: 12, bottom: 26 };
+  const w = 640, h = 240, margin = { left: 68, right: 16, top: 16, bottom: 32 };
   const plotW = w - margin.left - margin.right;
   const plotH = h - margin.top - margin.bottom;
   const values = history.map((p) => p.monthly_sales);
@@ -321,20 +345,20 @@ function DistrictSalesHistoryChart({ history, grain }) {
     <div className="district-trend-card">
       <div className="scenario-title">
         <strong>{grain === "district" ? "자치구 동종업종 분기별 매출 추이" : "분기별 매출 추이"}</strong>
-        <span>실측 시계열{grain === "district" ? " · 자치구 단위(상권 단위 다분기 데이터 없음)" : ""}</span>
+        <span>실측 시계열{grain === "district" ? ", 자치구 단위(상권 단위로는 여러 분기 데이터가 없어요)" : ""}</span>
       </div>
       <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} role="img" aria-label="자치구 동종업종 분기별 매출 추이">
         <line x1={margin.left} x2={w - margin.right} y1={margin.top + plotH} y2={margin.top + plotH} stroke="rgba(17,17,17,.15)" />
-        <text x={margin.left - 8} y={y(max) + 3} fontSize="9" fill="#6f706c" textAnchor="end">{money(Math.round(max))}만</text>
-        <text x={margin.left - 8} y={y(min) + 3} fontSize="9" fill="#6f706c" textAnchor="end">{money(Math.round(min))}만</text>
-        <path d={path} fill="none" stroke="#2357ff" strokeWidth="2" />
+        <text x={margin.left - 8} y={y(max) + 3} fontSize="12" fill="#5b6168" textAnchor="end">{money(Math.round(max))}만</text>
+        <text x={margin.left - 8} y={y(min) + 3} fontSize="12" fill="#5b6168" textAnchor="end">{money(Math.round(min))}만</text>
+        <path d={path} fill="none" stroke="#059b47" strokeWidth="2" />
         {history.map((p, i) => (
           <g key={p.quarter}>
-            <circle cx={x(i)} cy={y(p.monthly_sales)} r="3" fill="#2357ff">
-              <title>{`${fmtQ(p.quarter)} · ${money(p.monthly_sales)}만원`}</title>
+            <circle cx={x(i)} cy={y(p.monthly_sales)} r="3" fill="#059b47">
+              <title>{`${fmtQ(p.quarter)} ${money(p.monthly_sales)}만원`}</title>
             </circle>
             {(i === 0 || i === history.length - 1) && (
-              <text x={x(i)} y={h - 6} fontSize="9" fill="#6f706c" textAnchor={i === 0 ? "start" : "end"}>{fmtQ(p.quarter)}</text>
+              <text x={x(i)} y={h - 6} fontSize="12" fill="#5b6168" textAnchor={i === 0 ? "start" : "end"}>{fmtQ(p.quarter)}</text>
             )}
           </g>
         ))}
@@ -347,7 +371,7 @@ function ComparisonMatrix({ rows }) {
   if (!rows.length) return null;
   return (
     <section className="page-width compare-section">
-      <div className="section-heading"><div><span className="eyebrow">COMPARE</span><h2>후보 비교</h2></div><p>순위나 종합점수 없이 값만 비교합니다</p></div>
+      <div className="section-heading"><div><h2>숫자만 나란히 놓고 볼게요</h2></div><p>순위나 종합점수 없이 값 그대로만 보여드려요</p></div>
       <div className="compare-table-wrap">
         <table className="compare-table">
           <thead>
@@ -399,8 +423,8 @@ function MlSection({ candidate, closureBySite, yoyBySite, trendBySite }) {
   return (
     <section className="market-section">
       <div className="page-width">
-        <div className="section-heading"><div><span className="eyebrow">ML</span><h2>ML 상권 분석</h2></div><p>모델 추정 vs 실제 관측값 · 후보 상대비교</p></div>
-        {!ml || ml.status === "error" ? <p>ML 결과를 불러오지 못했습니다.</p> : (
+        <div className="section-heading"><div><h2>이 동네는 요즘 어떤가요</h2></div><p>모델 추정과 실제 관측값을 나란히 놓고 후보끼리 비교해요</p></div>
+        {!ml || ml.status === "error" ? <p>ML 결과를 불러오지 못했어요.</p> : (
           <>
             {ml.caution && (
               <div className={isReal ? "ml-info-banner" : "ml-caution-banner"}>{isReal ? "" : "⚠ "}{ml.caution}</div>
@@ -412,7 +436,7 @@ function MlSection({ candidate, closureBySite, yoyBySite, trendBySite }) {
                   <span>동종업종 점포당 예상 월매출</span>
                   <strong>{ml.predicted_monthly_sales != null ? `${money(ml.predicted_monthly_sales)}만원` : "-"}</strong>
                   <small>{salesBufferLine(ml.predicted_monthly_sales, candidate.min_required_sales)}</small>
-                  <small className="ml-source-tag">{isReal ? `서울시 실제 상권 데이터 기반 ${ml.model_name} · ${ml.data_completeness === "trdar_exact" ? "이 상권 실측 배분" : "자치구 평균 대체"}` : "⚠ 합성 데이터 fallback"}</small>
+                  <small className="ml-source-tag">{isReal ? `서울시 실제 상권 데이터 기반 ${ml.model_name}, ${ml.data_completeness === "trdar_exact" ? "이 상권 실측 배분" : "자치구 평균 대체"}` : "⚠ 합성 데이터 fallback"}</small>
                 </div>
               </div>
               <div className="ml-group">
@@ -425,7 +449,7 @@ function MlSection({ candidate, closureBySite, yoyBySite, trendBySite }) {
                     <div className="ml-metric"><span>평균 영업기간</span><strong>{observed.avg_open_months != null ? `${observed.avg_open_months}개월` : "-"}</strong></div>
                   </>
                 ) : (
-                  <p className="ml-no-snapshot">이 상권은 실측 스냅샷이 없어 관측 지표를 표시할 수 없습니다.</p>
+                  <p className="ml-no-snapshot">이 상권은 실측 스냅샷이 없어서 관측 지표를 보여드릴 수 없어요.</p>
                 )}
               </div>
               <div className="ml-group">
@@ -441,7 +465,7 @@ function MlSection({ candidate, closureBySite, yoyBySite, trendBySite }) {
           <div className="scenario-grid">
             <div className="scenario-card">
               <div className="scenario-title"><strong>기간 → 필요매출</strong><span>Rule Engine 계산값</span></div>
-              <p className="scenario-caption">x축: 회수 목표기간(개월) · y축(막대 길이): 현재 매출 대비 필요 유지율 · 막대 옆 숫자: 그 기간에 필요한 월매출(만원)</p>
+              <p className="scenario-caption">x축은 회수 목표기간(개월), 막대 길이는 현재 매출 대비 필요 유지율이에요. 막대 옆 숫자는 그 기간에 필요한 월매출(만원)이에요</p>
               {targetPeriods.map((t) => {
                 const isBaseline = t.months === Number(candidate?.target_months);
                 return (
@@ -456,7 +480,7 @@ function MlSection({ candidate, closureBySite, yoyBySite, trendBySite }) {
             </div>
             <div className="scenario-card dark-scenario">
               <div className="scenario-title"><strong>매출 유지율 → 회수기간</strong><span>Rule Engine 계산값</span></div>
-              <p className="scenario-caption">x축: 현재 매출 대비 유지율(%) · y축(막대 길이): 유지율 자체 · 막대 옆 숫자: 그 유지율에서 예상되는 회수기간(개월)</p>
+              <p className="scenario-caption">x축은 현재 매출 대비 유지율(%), 막대 길이도 유지율이에요. 막대 옆 숫자는 그 유지율에서 예상되는 회수기간(개월)이에요</p>
               {scenarios.map((s) => (
                 <div className="scenario-row" key={s.retention}>
                   <span>{Math.round(s.retention * 100)}<small>%</small></span>
@@ -483,7 +507,7 @@ function PolicySection({ candidate }) {
     <section className="policy-section">
       <div className="page-width">
         <div className="section-heading">
-          <div><span className="eyebrow">POLICY RAG</span><h2>{candidate?.candidate_region ? `${candidate.candidate_region}에서 확인할 정책금융` : "정책금융"}</h2></div>
+          <div><h2>{candidate?.candidate_region ? `${candidate.candidate_region}에서 확인할 정책금융` : "정책금융"}</h2></div>
           <p>Rule Engine의 추가 필요 이전자금 + 후보 자치구 기준, 최대 3건</p>
         </div>
         <p className="policy-priority-summary">{fundPriorityLine(rag.fund_priority)}</p>
@@ -513,12 +537,12 @@ function PolicySection({ candidate }) {
             ))}
           </div>
         ) : (
-          <div className="policy-empty">{rag.message || "현재 조건에서 직접적으로 추천할 정책금융을 찾지 못했습니다."}</div>
+          <div className="policy-empty">{rag.message || "지금 조건에 바로 맞는 정책금융을 찾지 못했어요."}</div>
         )}
         {commonChecks && (
           <div className="policy-warning">
-            <p>※ 정책지원 후보가 검색되어도 지원금이 확보된 것으로 계산하지 않습니다. 실제 지원 여부는 해당 기관 심사를 통해 결정됩니다.</p>
-            <p>※ 지원한도는 공고상 최대 지원한도이며 실제 승인금액과 다를 수 있습니다.</p>
+            <p>정책지원 후보가 검색되어도 지원금을 확보한 것으로 계산하지 않아요. 실제 지원 여부는 해당 기관 심사로 정해져요.</p>
+            <p>지원한도는 공고상 최대 금액이라 실제 승인액과 다를 수 있어요.</p>
           </div>
         )}
       </div>
@@ -531,11 +555,11 @@ function AiSection({ rows, selected, overall, comparisonSummary, aiFailed }) {
     <section className="ai-explanation-section">
       <div className="page-width">
         <div className="section-heading">
-          <div><span className="eyebrow">AI SUMMARY</span><h2>AI 종합 해석</h2></div>
-          <p>Rule Engine 계산 결과 + 검색된 정책 근거만 이용해 생성 · 확정 승인·추천이 아닙니다</p>
+          <div><h2>정리하면 이래요</h2></div>
+          <p>Rule Engine 계산 결과와 검색된 정책 근거만 이용해 만들었어요. 확정된 승인이나 추천이 아니에요</p>
         </div>
         {aiFailed || !selected?.ai_explanation ? (
-          <p className="ai-explanation-card">AI 해석을 불러오지 못해 계산·검색 결과만 표시합니다.</p>
+          <p className="ai-explanation-card">AI 해석을 불러오지 못해 계산과 검색 결과만 보여드려요.</p>
         ) : (
           <>
             <div className="ai-explanation-card ai-quad">
@@ -545,7 +569,7 @@ function AiSection({ rows, selected, overall, comparisonSummary, aiFailed }) {
               <div><h4>선택 조건</h4><p>{selected.ai_explanation.decision_condition}</p></div>
             </div>
             {selected.ai_explanation.important_checks?.length > 0 && (
-              <div className="checks">{selected.ai_explanation.important_checks.map((x, i) => <span key={i}>확인 · {x}</span>)}</div>
+              <div className="checks">{selected.ai_explanation.important_checks.map((x, i) => <span key={i}>확인 {x}</span>)}</div>
             )}
             {rows.length > 1 && comparisonSummary && (
               <div className="ai-comparison-card"><h4>후보 간 차이</h4><p>{comparisonSummary}</p></div>
@@ -569,12 +593,12 @@ function AssumptionsAccordion({ assumptions, mlMetrics }) {
       </button>
       {open && (
         <div className="insight-copy">
-          <p>ML 결과는 모델 추정치이며 Rule Engine의 확정 계산값을 대체하지 않습니다.</p>
+          <p>ML 결과는 모델 추정치예요. Rule Engine의 확정 계산값을 대신하지 않아요.</p>
           {mlMetrics && (
-            <p>ML 모델 참고 오차(Test 기준): MAE 약 {money(mlMetrics.mae)}만원, sMAPE {mlMetrics.smape}%, R² {mlMetrics.r2} — 자치구 단위 분기 매출 예측 기준 수치입니다.</p>
+            <p>ML 모델 참고 오차(Test 기준): MAE 약 {money(mlMetrics.mae)}만원, sMAPE {mlMetrics.smape}%, R² {mlMetrics.r2} — 자치구 단위 분기 매출 예측 기준이에요.</p>
           )}
-          <p>정책 정보는 공식 공고 기준이며, 자격·신청상태는 실제 신청 전 다시 확인이 필요합니다.</p>
-          <p>최종 추천은 입력값과 현재 데이터 기준으로 계산된 것이며 확정 승인을 의미하지 않습니다.</p>
+          <p>정책 정보는 공식 공고 기준이에요. 자격과 신청 상태는 신청 전에 다시 확인해 주세요.</p>
+          <p>최종 추천은 입력하신 값과 현재 데이터로 계산한 결과예요. 확정된 승인을 뜻하지 않아요.</p>
           {(assumptions || []).map((a, i) => <p key={i}>{a}</p>)}
         </div>
       )}
@@ -590,7 +614,7 @@ function PerfFooter({ performance }) {
       <span>Rule+ML+RAG {performance.analysis_seconds ?? "-"}s</span>
       <span>RAG {performance.rag_retrieval_seconds ?? "-"}s</span>
       <span>ML {performance.ml_inference_seconds ?? "-"}s</span>
-      <span>LLM {performance.llm_seconds ?? "-"}s · {performance.llm_calls ?? 0}회</span>
+      <span>LLM {performance.llm_seconds ?? "-"}s, {performance.llm_calls ?? 0}회</span>
       <span>전체 {performance.total_seconds ?? "-"}s</span>
     </section>
   );

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import QuestionLayout from "../components/QuestionLayout.jsx";
 import Prefill from "../components/Prefill.jsx";
+import { useClearedError } from "../useClearedError.js";
 
 export default function TextStep({ title, sub, value, placeholder, prefillScenario, onNext }) {
   const [val, setVal] = useState(value || "");
+  const showError = useClearedError(val.trim() !== "");
 
   return (
     <QuestionLayout
@@ -17,7 +19,7 @@ export default function TextStep({ title, sub, value, placeholder, prefillScenar
       <Prefill scenario={prefillScenario} />
 
       <div className="content">
-        <div className="input-line text">
+        <div className={"input-line text" + (showError ? " error" : "")}>
           <input value={val} onChange={e => setVal(e.target.value)} placeholder={placeholder} />
         </div>
       </div>

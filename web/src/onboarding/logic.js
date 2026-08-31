@@ -77,18 +77,25 @@ export function scenario(n) {
 /**
  * 온보딩 상태를 백엔드 /staymove 페이로드로 변환한다.
  *
- * 보증금·권리금 처리(중요):
+ 보증금과 권리금 처리(중요):
  *   백엔드 current.deposit 은 "현재 보증금 — 회수되어 후보 보증금에 재투입 가능"을 뜻하고
  *   net_deposit_change = 후보 보증금 − 현재 보증금 으로 쓰인다.
- *   온보딩에서는 이를 사용자가 답하기 쉬운 "보증금 반환 예상액"(밀린 임대료·원상복구비를 뺀 순액)으로 바꿔 묻고,
- *   "권리금 회수"를 별도 칸으로 추가했다. 백엔드에는 권리금 회수에 대응하는 필드가 없으므로
- *   권리금은 available_self_fund(가용 자기자금)에 더해서 보낸다.
+ *   온보딩에서는 이를 사용자가 답하기 쉬운 "보증금 반환 예상액"(밀린 임대료와 원상복구비를 뺀 순액)으로
+ *   바꿔 묻고, "권리금 회수"를 별도 칸으로 추가했다.
  *
- *   ⚠️ 두 오차의 방향이 반대다.
- *     ① 순액을 계약서상 금액 자리에 넣어 net_deposit_change가 과대 → 보수적(안전)
- *     ② 권리금을 확정 현금처럼 합산 → 자금이 덜 필요하다고 나올 수 있음(낙관 위험)
- *   특히 ②는 권리금을 크게 잡은 사용자일수록 영향이 커진다.
- *   숫자 예시와 정확히 고치는 방법은 web/README.md 참고.
+ *   ── B안 적용 (팀 결정) ─────────────────────────────────────────
+ *   권리금은 available_self_fund 에 합산하지 않는다. 현금만 보낸다.
+ *
+ *   백엔드의 self_fund 는 "통장에 있는 확정 현금"을 전제로 쓰이는데, 권리금은
+ *   새 임차인이 나타나야 받는 돈이라 확정이 아니다. 합산하면 자금이 덜 필요하다고
+ *   나와서 "이만하면 되겠다"는 낙관적 오판을 부른다.
+ *
+ *   남는 오차는 하나뿐이고 방향이 보수적이다.
+ *     ① 순액을 계약서상 금액 자리에 넣어 net_deposit_change가 과대 → 자금이 더 필요하다고 나옴
+ *
+ *   권리금 입력값은 state에 그대로 남겨둔다. 백엔드가 필드를 나눠 받게 되면(C안)
+ *   이 어댑터만 고쳐서 바로 쓸 수 있다.
+ *   숫자 예시와 C안 설계는 web/README.md 참고.
  */
 export function toStayMovePayload(state, { candidates, recoveryMonths, trdarByIndex = {} }) {
   const num = v => Number(v || 0);
@@ -105,8 +112,11 @@ export function toStayMovePayload(state, { candidates, recoveryMonths, trdarByIn
       fixed_cost: num(cur.fixed),
       // 보증금 반환 예상액을 현재 보증금 자리에 넣는다(위 주석 참고)
       deposit: num(cur.depositReturn),
-      // 권리금 회수 예상액은 대응 필드가 없어 자기자금에 합산한다
-      available_self_fund: num(cur.cash) + num(cur.keyMoneyRecovery)
+      // B안: 권리금은 확정 현금이 아니므로 합산하지 않고 현금만 보낸다.
+      // 값 자체는 state(cur.keyMoneyRecovery)에 그대로 살아 있다 — 지우지 말 것.
+      // 백엔드가 필드를 받게 되면(C안) 아래 한 줄만 살리면 된다:
+      //   key_money_recovery: num(cur.keyMoneyRecovery),
+      available_self_fund: num(cur.cash)
     },
     target_recovery_months: recoveryMonths != null ? Number(recoveryMonths) : null,
     candidates: candidates.map((c, i) => ({

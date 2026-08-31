@@ -154,7 +154,6 @@ body {
      (5vh - 24px) 기울기라 낮은 화면에선 자동으로 조여져 패널이 넘치지 않는다. */
   --gap-track: clamp(16px, calc(5vh - 24px), 40px);
   --gap-title: clamp(14px, 1.8vh, 32px);
-  --gap-back: clamp(8px, 1.2vh, 20px);
   --gap-metric: clamp(16px, 2.2vh, 40px);
   --pad-stage-top: clamp(32px, 5vh, 88px);
   --gap-content: clamp(28px, 3.6vh, 52px);
@@ -192,37 +191,6 @@ body {
   margin-bottom: 4px;
 }
 
-/* 라벨을 붙인 뒤로가기 버튼 — 44px 이상 터치 영역 확보 */
-.panel-back {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 44px;
-  padding: 10px 14px 10px 10px;
-  margin: 0 0 var(--gap-back) -10px; /* 좌측 광학 정렬 보정 */
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  transition: background .15s var(--ease), color .15s var(--ease);
-}
-
-.panel-back:hover {
-  background: var(--surface);
-  color: var(--text);
-}
-
-.panel-back svg {
-  display: block;
-  margin-left: -2px;
-}
-
 /* 서비스 심볼 — 좌측(맥락) 컬럼의 최상단 앵커 */
 .panel-brand {
   flex: 1;
@@ -233,10 +201,6 @@ body {
   color: var(--text);
 }
 
-.panel-stepno {
-  font-size: 13px;
-  color: var(--muted);
-}
 
 /* 화면 전체 폭 진행바 (상단 고정) */
 .top-progress {
@@ -256,17 +220,11 @@ body {
   transition: width .3s var(--ease);
 }
 
-/* 이 단계의 입력이 무엇을 준비하고 어디에 쓰이는지 안내 */
+/* 이 단계의 입력이 무엇을 준비하고 어디에 쓰이는지 안내.
+   위쪽 여백은 뒤로가기 버튼이 맡던 자리를 대신한다 */
 .step-why {
+  margin-top: var(--gap-title);
   margin-bottom: var(--gap-title);
-}
-
-.step-why-label {
-  font-size: 12.5px;
-  font-weight: 800;
-  color: var(--primary);
-  letter-spacing: -.01em;
-  margin-bottom: 8px;
 }
 
 .step-why-title {
@@ -327,20 +285,6 @@ button.track-item {
   color: var(--primary);
 }
 
-.track-jump-hint {
-  margin-left: 8px;
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--primary);
-  opacity: 0;
-  transition: opacity .15s var(--ease);
-}
-
-.track-item.jumpable:hover .track-jump-hint,
-.track-item.jumpable:focus-visible .track-jump-hint {
-  opacity: 1;
-}
-
 /* 단계별 의미 아이콘 노드.
    항목 왼쪽 끝은 세로선에서 32px(border 2 + padding 30) 떨어져 있고 세로선 중심은 그보다 31px 왼쪽.
    아이콘(26px) 중심을 거기에 맞추려면 왼쪽으로 31 + 13 = 44px 이동 */
@@ -360,11 +304,43 @@ button.track-item {
 
 .track-node svg {
   display: block;
+  grid-area: 1 / 1; /* 두 아이콘을 겹쳐두고 투명도로 교체 */
+  transition: opacity .18s var(--ease);
 }
 
+.track-node .node-alt {
+  opacity: 0;
+}
+
+/* 답한 단계 — 되돌아갈 수 있다는 걸 정적인 링으로 상시 알림 */
 .track-item.done .track-node {
   background: var(--primary-bright);
   color: #fff;
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+/* 노드만 눌러도 되도록 44px 터치 영역 확보 (26 + 9*2) */
+.track-item.done .track-node::before {
+  content: "";
+  position: absolute;
+  inset: -9px;
+}
+
+/* 커서를 올리면 아이콘이 되돌리기로 바뀌어 의미가 형태로 읽힘 */
+.track-item.jumpable:hover .track-node,
+.track-item.jumpable:focus-visible .track-node {
+  background: var(--primary);
+  box-shadow: 0 0 0 4px rgba(2, 197, 81, .22);
+}
+
+.track-item.jumpable:hover .track-node .node-base,
+.track-item.jumpable:focus-visible .track-node .node-base {
+  opacity: 0;
+}
+
+.track-item.jumpable:hover .track-node .node-alt,
+.track-item.jumpable:focus-visible .track-node .node-alt {
+  opacity: 1;
 }
 
 /* 현재 답하고 있는 단계 — 아이콘 주변에 링이 퍼지며 시선을 끔 */
@@ -412,6 +388,69 @@ button.track-item {
 .track-item.done .track-value {
   color: var(--text);
   font-weight: 700;
+}
+
+/* 트랙을 눌러 되돌아갈 수 있다는 첫 안내.
+   .track이 flex column + gap이라, 음수 margin으로 바로 위 항목에 붙인다 */
+.track-coach {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start; /* 트랙 폭까지 늘어나지 않고 문구 길이에 맞춤 */
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin-top: calc(8px - var(--gap-track));
+  padding: 10px 8px 10px 13px;
+  border-radius: 10px;
+  background: var(--text);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.track-coach::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--text);
+  transform: rotate(45deg);
+}
+
+.track-coach > span {
+  position: relative; /* 말풍선 꼭지 위로 */
+  text-align: center;
+}
+
+.track-coach b {
+  color: var(--primary-bright);
+  font-weight: 700;
+}
+
+/* 안내 끄기 — 한 번 누르면 다시 뜨지 않음 */
+.track-coach-close {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, .6);
+  cursor: pointer;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+
+.track-coach-close:hover,
+.track-coach-close:focus-visible {
+  background: rgba(255, 255, 255, .15);
+  color: #fff;
 }
 
 .track-active-badge {
@@ -570,8 +609,16 @@ button.track-item {
   .top-progress-bar,
   .bar,
   .track-node,
+  .track-node svg,
+  .track-coach-close,
+  .q-head-collapse,
+  .q-head-slide,
   .input-line {
     transition: none !important;
+  }
+
+  .is-returning {
+    animation: none !important;
   }
 
   .input-line.error {
@@ -1560,6 +1607,56 @@ h1 {
 .cand-card.is-hidden {
   display: none;
 }
+
+/* ---------- 포커스 모드 복원 연출 ----------
+   후보지 카드를 펼치면 제목, 형제 카드, 하단 버튼이 사라진다.
+   입력 완료로 되돌아올 때 이것들이 같은 프레임에 한꺼번에 나타나면 뚝 끊긴다.
+   제목은 높이로 펴고(아래 .q-head-collapse), 나머지는 살짝 미끄러지며 들어오게 한다. */
+
+.q-head-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .3s var(--ease);
+}
+
+.q-head-collapse.open {
+  grid-template-rows: 1fr;
+}
+
+/* 잘라내는 상자. 여기에 transform을 걸면 상자째 움직여서 소용이 없다 */
+.q-head-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* 실제로 움직이는 층 — 높이가 줄면서 내용이 위로 빠져나가듯 보이게 한다.
+   이게 없으면 글자가 제자리에서 눌리는 느낌이 난다 */
+.q-head-slide {
+  opacity: 0;
+  transform: translateY(-16px);
+  transition: transform .3s var(--ease), opacity .2s var(--ease);
+}
+
+.q-head-collapse.open .q-head-slide {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes cand-return {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.is-returning {
+  animation: cand-return .26s var(--ease) both;
+}
+
+/* 한꺼번에 뜨지 않고 위에서 아래로 훑고 지나가도록 */
+.cand-list .cand-card.is-returning:nth-child(2) { animation-delay: .05s; }
+.cand-list .cand-card.is-returning:nth-child(3) { animation-delay: .1s; }
+.add-btn.is-returning,
+.max-note.is-returning { animation-delay: .12s; }
+.footer.is-returning { animation-delay: .15s; }
 
 .focus-crumb {
   /* 한 문장이라 flex로 쪼개면 <b>와 뒷말 사이에 여분 간격이 생긴다 */

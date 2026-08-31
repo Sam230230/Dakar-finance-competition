@@ -24,6 +24,13 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
   const listRef = useRef(null);
   const lastClosedRef = useRef(null);
   const timersRef = useRef([]);
+  // 포커스가 풀릴 때 한 번만 등장 애니메이션을 태우기 위한 플래그.
+  // 감췄던 요소들이 같은 프레임에 한꺼번에 나타나면 뚝 끊기는 느낌이 난다.
+  const [restoring, setRestoring] = useState(false);
+  // 제목 펼침 상태. focus와 따로 두는 이유는 아래 useEffect 주석 참고
+  const [headOpen, setHeadOpen] = useState(true);
+  const lastFocusRef = useRef(null);
+  const wasFocusRef = useRef(false);
 
   useEffect(() => () => timersRef.current.forEach(clearTimeout), []);
 
@@ -34,6 +41,7 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
   }
 
   function openCard(i) {
+    lastFocusRef.current = i;
     setFocusIndex(i); // 먼저 화면을 정리하고
     // 한 틱 뒤에 펼쳐야 애니메이션이 산다.
     // rAF는 창이 가려지면 스로틀돼 아예 안 열릴 수 있어 타이머를 쓴다.
@@ -65,6 +73,30 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
     setFocusIndex(shift);
   }
 
+  const RESTORE_MS = 420; // 등장 애니메이션 + 스태거가 끝나는 시점
+
+  // 제목 펼침은 focus와 한 프레임 어긋나게 둔다.
+  // 형제 카드가 display:none에서 돌아오는 리플로우와 같은 커밋에 묶이면
+  // 브라우저가 트랜지션 시작값을 못 잡아 제목이 그냥 튄다.
+  useEffect(() => {
+    if (focus) {
+      setHeadOpen(false);
+      return;
+    }
+    const t = setTimeout(() => setHeadOpen(true), 0);
+    timersRef.current.push(t);
+    return () => clearTimeout(t);
+  }, [focus]);
+
+  useEffect(() => {
+    if (wasFocusRef.current && !focus) {
+      setRestoring(true);
+      const t = setTimeout(() => setRestoring(false), RESTORE_MS);
+      timersRef.current.push(t);
+    }
+    wasFocusRef.current = focus;
+  }, [focus]);
+
   useEffect(() => {
     // 모션 축소 설정을 켠 사용자에게는 스크롤도 즉시 이동
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -85,19 +117,22 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
   return (
     <QuestionLayout
       left={
-        focus ? null : (
-        <>
-          <h1>
-            이전할 후보지의
-            <br />
-            조건을 알려주세요.
-          </h1>
-          <p className="sub">
-            후보지를 눌러 정보를 입력해 주세요. 상권과 <b>정책정보</b>도 함께 보여드려요.
-            <InfoTooltip text="[메모] 정책정보를 어떤 기준으로, 어떤 항목을 보여줄지 안내 문구는 추후 추가 예정" />
-          </p>
-        </>
-        )
+        /* 조건부 렌더 대신 높이를 접었다 편다. 언마운트하면 되돌아올 때 연출이 안 걸린다 */
+        <div className={"q-head-collapse" + (headOpen ? " open" : "")}>
+          <div className="q-head-inner">
+            <div className="q-head-slide">
+              <h1>
+                이전할 후보지의
+                <br />
+                조건을 알려주세요.
+              </h1>
+              <p className="sub">
+                후보지를 눌러 정보를 입력해 주세요. 상권과 <b>정책정보</b>도 함께 보여드려요.
+                <InfoTooltip text="[메모] 정책정보를 어떤 기준으로, 어떤 항목을 보여줄지 안내 문구는 추후 추가 예정" />
+              </p>
+            </div>
+          </div>
+        </div>
       }
     >
       {focus ? (
@@ -105,7 +140,9 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
           <b>후보지 {labels[focusIndex]}</b> 정보를 입력하고 있어요
         </div>
       ) : (
-        <Prefill scenario={prefillScenario} />
+        <div className={restoring ? "is-returning" : undefined}>
+          <Prefill scenario={prefillScenario} />
+        </div>
       )}
 
       <div className="content">
@@ -115,7 +152,12 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
             const filled = isFilled(c);
             return (
               <div
-                className={"cand-card" + (open ? " open" : "") + (focus && focusIndex !== i ? " is-hidden" : "")}
+                className={
+                  "cand-card" +
+                  (open ? " open" : "") +
+                  (focus && focusIndex !== i ? " is-hidden" : "") +
+                  (restoring && lastFocusRef.current !== i ? " is-returning" : "")
+                }
                 key={i}
               >
                 <div className="cand-head">
@@ -130,7 +172,7 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
                       {i === 0 ? <span className="tag-req">필수</span> : <span className="tag-opt">선택</span>}
                     </span>
                     <span className={"cand-summary" + (filled ? " filled" : "")}>
-                      {filled ? `${c.address} · 월 ${money(monthly(c))}` : "정보를 입력해 주세요"}
+                      {filled ? `${c.address}, 월 ${money(monthly(c))}` : "정보를 입력해 주세요"}
                     </span>
                     <span className="cand-chevron" aria-hidden="true">
                       <ChevronDown size={18} strokeWidth={2.2} />
@@ -230,18 +272,18 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
         </div>
 
         {focus ? null : list.length < 3 ? (
-          <button type="button" className="add-btn" onClick={addOne}>
+          <button type="button" className={"add-btn" + (restoring ? " is-returning" : "")} onClick={addOne}>
             <span className="plus-circle">
               <Plus size={13} strokeWidth={3} />
             </span>{" "}
             후보지 추가
           </button>
         ) : (
-          <p className="max-note">후보지는 최대 3곳까지 비교할 수 있어요.</p>
+          <p className={"max-note" + (restoring ? " is-returning" : "")}>후보지는 최대 3곳까지 비교할 수 있어요.</p>
         )}
       </div>
 
-      <div className="footer" style={{ display: focus ? "none" : undefined }}>
+      <div className={"footer" + (restoring ? " is-returning" : "")} style={{ display: focus ? "none" : undefined }}>
         <button
           className="next"
           disabled={!ready}

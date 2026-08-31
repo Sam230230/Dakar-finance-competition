@@ -4,6 +4,7 @@ import Prefill from "../components/Prefill.jsx";
 import ChipRow from "../components/ChipRow.jsx";
 import InfoTooltip from "../components/InfoTooltip.jsx";
 import { money } from "../logic.js";
+import { useClearedError } from "../useClearedError.js";
 
 export default function CashStep({ current, prefillScenario, onNext }) {
   const [cash, setCash] = useState(current.cash ?? "");
@@ -22,15 +23,17 @@ export default function CashStep({ current, prefillScenario, onNext }) {
     if (cash === "" || revealed) return;
     // 값 입력으로 생긴 레이아웃 변화가 한 번 정리된 뒤에 펼쳐야
     // 브라우저가 트랜지션 시작값을 제대로 잡는다(즉시 튐 방지).
-    let inner;
-    const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => setRevealed(true));
-    });
-    return () => {
-      cancelAnimationFrame(outer);
-      if (inner) cancelAnimationFrame(inner);
-    };
+    //
+    // rAF가 아니라 setTimeout을 쓰는 이유: 탭이 숨겨지면 rAF는 아예 멈춘다.
+    // revealed는 연출값이 아니라 보증금 칸 노출과 오류 규칙까지 좌우하는
+    // 기능값이라, 화면이 안 보여도 반드시 걸려야 한다.
+    // (CandidatesStep의 openCard도 같은 이유로 setTimeout을 쓴다)
+    const t = setTimeout(() => setRevealed(true), 0);
+    return () => clearTimeout(t);
   }, [cash, revealed]);
+
+  // 현금 칸은 아래 revealed 래치가 이미 같은 역할을 한다
+  const depositError = useClearedError(deposit !== "");
 
   const total = (Number(cash) || 0) + (Number(deposit) || 0) + (Number(keyAmount) || 0);
   const ready = cash !== "" && deposit !== "";
@@ -84,11 +87,11 @@ export default function CashStep({ current, prefillScenario, onNext }) {
             <div className="field-block-head">
               <span className="field-block-label">
                 보증금 반환 예상액
-                <InfoTooltip text="계약서상 보증금이 아니라, 밀린 임대료·원상복구비 등을 제외한 순액이에요. 확실하지 않다면 보증금의 80~90%로 잡아도 괜찮아요." />
+                <InfoTooltip text="계약서상 보증금이 아니라, 밀린 임대료와 원상복구비 등을 제외한 순액이에요. 확실하지 않다면 보증금의 80~90%로 잡아도 괜찮아요." />
               </span>
               <span className="tag-req">필수</span>
             </div>
-            <div className="input-line">
+            <div className={"input-line" + (depositError ? " error" : "")}>
               <input type="number" min="0" value={deposit} onChange={e => setDeposit(e.target.value)} placeholder="0" />
               <span className="unit">만원</span>
             </div>
