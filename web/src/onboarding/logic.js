@@ -83,8 +83,12 @@ export function scenario(n) {
  *   온보딩에서는 이를 사용자가 답하기 쉬운 "보증금 반환 예상액"(밀린 임대료·원상복구비를 뺀 순액)으로 바꿔 묻고,
  *   "권리금 회수"를 별도 칸으로 추가했다. 백엔드에는 권리금 회수에 대응하는 필드가 없으므로
  *   권리금은 available_self_fund(가용 자기자금)에 더해서 보낸다.
- *   → 이전에 동원 가능한 총액은 정확하지만, 추가로 묶이는 보증금 차액은 근사가 된다.
- *   자세한 배경은 web/README.md 참고.
+ *
+ *   ⚠️ 두 오차의 방향이 반대다.
+ *     ① 순액을 계약서상 금액 자리에 넣어 net_deposit_change가 과대 → 보수적(안전)
+ *     ② 권리금을 확정 현금처럼 합산 → 자금이 덜 필요하다고 나올 수 있음(낙관 위험)
+ *   특히 ②는 권리금을 크게 잡은 사용자일수록 영향이 커진다.
+ *   숫자 예시와 정확히 고치는 방법은 web/README.md 참고.
  */
 export function toStayMovePayload(state, { candidates, recoveryMonths, trdarByIndex = {} }) {
   const num = v => Number(v || 0);
