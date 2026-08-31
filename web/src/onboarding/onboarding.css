@@ -1,0 +1,1835 @@
+:root {
+  --bg: #fff;
+  --surface: #f7f9fc;
+  --text: #121619;
+  --muted: #5b6168;
+  --line: #e7e8ea;
+  --primary: #059b47;
+  --primary-bright: #02c551;
+  --primary-soft: #e7fbf0;
+  --orange: #b85a16;
+  --orange-soft: #fff3e9;
+  --danger: #e5484d;
+  --content-w: 640px;
+  --ease: cubic-bezier(.4, 0, .2, 1);
+  --header-h: 88px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Noto Sans KR", "Segoe UI", sans-serif;
+}
+
+/* ---------- App bar (JOBDA GNB 벤치마킹: sticky, white, 하단 보더) ---------- */
+
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(255, 255, 255, .92);
+  backdrop-filter: saturate(180%) blur(8px);
+  -webkit-backdrop-filter: saturate(180%) blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+.appbar-row {
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 14px 24px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.back {
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  cursor: pointer;
+  padding: 6px;
+  margin: -6px;
+  border-radius: 8px;
+  color: var(--text);
+  transition: background .15s var(--ease);
+}
+
+.back:hover {
+  background: var(--surface);
+}
+
+.brand {
+  flex: 1;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  color: var(--text);
+}
+
+.progress-wrap {
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 0 24px 12px;
+}
+
+.progress {
+  height: 5px;
+  background: #edf0f4;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bar {
+  height: 100%;
+  width: 0;
+  background: var(--primary-bright);
+  transition: width .25s var(--ease);
+}
+
+.stepno {
+  min-width: 44px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 시작 화면 심볼 — 좌측 패널의 .panel-brand와 같은 톤 */
+.start-brand {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  line-height: 1.2;
+  color: var(--text);
+  margin-bottom: 28px;
+}
+
+/* ---------- Page shell ---------- */
+
+.page {
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 후보 안내/결과처럼 질문-답변 쌍이 없는 화면의 중앙 정렬 폭 ---------- */
+
+.single-col {
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+@media (min-width: 1400px) {
+  :root {
+    --content-w: 1120px;
+  }
+}
+
+/* ---------- 스플릿 스크린: 좌 라이브 요약 / 우 질문 폼 (1:1) ---------- */
+/* JOBDA 베이스라인: 흰 배경, 그린 액센트, 3단 뉴트럴 그레이, 16px 라운드, 레이어드 섀도 */
+
+/* 세로 리듬: 화면이 높으면 여백이 늘고, 낮은 노트북에선 자동으로 조여져
+   패널이 넘치지 않도록 clamp(최소, 뷰포트비례, 최대)로 정의 */
+:root {
+  --pad-y: clamp(20px, 3.2vh, 64px);     /* 패널 상하 여백 */
+  /* 타임라인 간격: 800px 화면에서 16px, 1000px에서 26px, 1200px에서 36px로 커지고 40px에서 상한.
+     (5vh - 24px) 기울기라 낮은 화면에선 자동으로 조여져 패널이 넘치지 않는다. */
+  --gap-track: clamp(16px, calc(5vh - 24px), 40px);
+  --gap-title: clamp(14px, 1.8vh, 32px);
+  --gap-back: clamp(8px, 1.2vh, 20px);
+  --gap-metric: clamp(16px, 2.2vh, 40px);
+  --pad-stage-top: clamp(32px, 5vh, 88px);
+  --gap-content: clamp(28px, 3.6vh, 52px);
+}
+
+.app-split {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 40px;
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* 가운데 기준 좌우 동일 비율 */
+  min-height: 100vh;
+}
+
+.panel {
+  background: var(--bg);
+  color: var(--text);
+  border-right: 1px solid var(--line);
+  padding: var(--pad-y) 72px var(--pad-y) 0; /* 가운데 구분선에서 한 칸 더 떨어뜨림 */
+  position: sticky;
+  top: 10px; /* 상단 진행바(10px) 아래에 붙도록 */
+  align-self: start;
+  /* 내용이 짧아도 구분선이 화면 끝까지 이어지도록 높이를 뷰포트에 고정 */
+  min-height: calc(100vh - 10px);
+  max-height: calc(100vh - 10px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+/* 라벨을 붙인 뒤로가기 버튼 — 44px 이상 터치 영역 확보 */
+.panel-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 10px 14px 10px 10px;
+  margin: 0 0 var(--gap-back) -10px; /* 좌측 광학 정렬 보정 */
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s var(--ease), color .15s var(--ease);
+}
+
+.panel-back:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.panel-back svg {
+  display: block;
+  margin-left: -2px;
+}
+
+/* 서비스 심볼 — 좌측(맥락) 컬럼의 최상단 앵커 */
+.panel-brand {
+  flex: 1;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.panel-stepno {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 화면 전체 폭 진행바 (상단 고정) */
+.top-progress {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  width: 100%;
+  height: 10px;
+  background: #edf0f4;
+  overflow: hidden;
+}
+
+.top-progress-bar {
+  height: 100%;
+  background: var(--primary-bright);
+  border-radius: 0 999px 999px 0;
+  transition: width .3s var(--ease);
+}
+
+/* 이 단계의 입력이 무엇을 준비하고 어디에 쓰이는지 안내 */
+.step-why {
+  margin-bottom: var(--gap-title);
+}
+
+.step-why-label {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: -.01em;
+  margin-bottom: 8px;
+}
+
+.step-why-title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: -.02em;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.step-why-body {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.track {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-track);
+  border-left: 2px solid var(--line);
+  /* 아이콘(26px)이 세로선 밖으로 13px 튀어나오므로, 패널 왼쪽 경계에 잘리지 않도록 여유 확보 */
+  margin-left: 16px;
+  padding-left: 30px;
+}
+
+.track-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  flex-shrink: 0; /* 공간이 모자라도 항목 자체는 찌그러지지 않게 */
+}
+
+/* 이미 답한 단계 — 눌러서 되돌아갈 수 있음 */
+button.track-item {
+  border: 0;
+  background: none;
+  font-family: inherit;
+  padding-left: 0;
+  padding-right: 0;
+  padding-top: 0;
+}
+
+.track-item.jumpable {
+  cursor: pointer;
+}
+
+.track-item.jumpable .track-value {
+  transition: color .15s var(--ease);
+}
+
+.track-item.jumpable:hover .track-value,
+.track-item.jumpable:focus-visible .track-value {
+  color: var(--primary);
+}
+
+.track-jump-hint {
+  margin-left: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--primary);
+  opacity: 0;
+  transition: opacity .15s var(--ease);
+}
+
+.track-item.jumpable:hover .track-jump-hint,
+.track-item.jumpable:focus-visible .track-jump-hint {
+  opacity: 1;
+}
+
+/* 단계별 의미 아이콘 노드.
+   항목 왼쪽 끝은 세로선에서 32px(border 2 + padding 30) 떨어져 있고 세로선 중심은 그보다 31px 왼쪽.
+   아이콘(26px) 중심을 거기에 맞추려면 왼쪽으로 31 + 13 = 44px 이동 */
+.track-node {
+  position: absolute;
+  left: -44px;
+  top: -4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: #a7acb4;
+  transition: background .2s var(--ease), color .2s var(--ease);
+}
+
+.track-node svg {
+  display: block;
+}
+
+.track-item.done .track-node {
+  background: var(--primary-bright);
+  color: #fff;
+}
+
+/* 현재 답하고 있는 단계 — 아이콘 주변에 링이 퍼지며 시선을 끔 */
+.track-item.active .track-node {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.track-item.active .track-node::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid var(--primary-bright);
+  animation: track-ring 1.6s ease-out infinite;
+}
+
+@keyframes track-ring {
+  0% { opacity: .55; transform: scale(.85); }
+  70% { opacity: 0; transform: scale(1.2); }
+  100% { opacity: 0; transform: scale(1.2); }
+}
+
+.track-label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+/* 아직 답하지 않은 단계 — 라벨만 남기고 한 단계 더 흐리게 */
+.track-item.pending .track-label {
+  color: #a7acb4;
+  margin-bottom: 0;
+}
+
+.track-value {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: #a7acb4;
+  min-height: 20px;
+}
+
+.track-item.done .track-value {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.track-active-badge {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-soft);
+  padding: 3px 9px;
+  border-radius: 999px;
+  animation: badge-blink 1.4s ease-in-out infinite;
+}
+
+@keyframes badge-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+
+.live-metric {
+  margin-top: var(--gap-metric);
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 10px rgba(18, 22, 25, .03), 0 16px 25px rgba(18, 22, 25, .05);
+}
+
+.live-metric-label {
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.live-metric-label .pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-bright);
+  flex-shrink: 0;
+  animation: pulse-dot 2s ease-out infinite;
+}
+
+@keyframes pulse-dot {
+  0% { box-shadow: 0 0 0 0 rgba(2, 197, 81, .5); }
+  70% { box-shadow: 0 0 0 8px rgba(2, 197, 81, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(2, 197, 81, 0); }
+}
+
+.live-metric-value {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: var(--primary);
+}
+
+.live-metric-value.negative {
+  color: var(--danger);
+}
+
+.live-metric-formula {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.live-metric-formula b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.live-metric-pending {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+}
+
+.live-metric-placeholder {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.stage {
+  /* 좌우: 구분선에서 패널과 같은 만큼 떨어뜨림 / 세로: 가운데 정렬 대신 위쪽 기준 */
+  padding: var(--pad-stage-top) 0 56px 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.stage-inner {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .app-split {
+    grid-template-columns: 1fr;
+    padding: 0 20px;
+    min-height: 0;
+  }
+
+  .panel {
+    position: relative;
+    min-height: 0; /* 세로 스택에서는 내용 높이만큼만 차지 */
+    max-height: none;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 28px 0;
+  }
+
+  /* 세로 스택에서는 핵심 문장만 남기고 보조 설명은 접음 */
+  .step-why-body {
+    display: none;
+  }
+
+  .stage {
+    padding: 32px 0 40px;
+  }
+}
+
+/* 세로가 매우 낮은 화면(작은 노트북)에서는 보조 설명을 접어
+   기능 요소인 타임라인과 라이브 카드가 잘리지 않도록 함 */
+@media (min-width: 901px) and (max-height: 760px) {
+  .step-why-body {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-item.active .track-node::after,
+  .track-active-badge,
+  .live-metric-label .pulse {
+    animation: none;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+
+  /* 펼침·접힘·토글·진행바까지 모두 즉시 전환 */
+  .cand-body,
+  .cand-card,
+  .cand-chevron,
+  .reveal-group,
+  .keymoney-body,
+  .switch,
+  .knob,
+  .top-progress-bar,
+  .bar,
+  .track-node,
+  .input-line {
+    transition: none !important;
+  }
+
+  .input-line.error {
+    animation: none !important;
+  }
+}
+
+@keyframes step-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.screen.step-enter {
+  animation: step-in .28s var(--ease);
+}
+
+h1 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -.02em;
+}
+
+.sub {
+  margin: 14px 0 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.content {
+  margin-top: var(--gap-content);
+}
+
+/* ---------- Inputs ---------- */
+
+.input-line {
+  display: flex;
+  align-items: center;
+  border-bottom: 2px solid #ccd3dd;
+  padding: 12px 2px 10px;
+  transition: border-color .15s var(--ease);
+}
+
+.input-line:focus-within {
+  border-bottom-color: var(--primary-bright);
+}
+
+.input-line input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.input-line.text input {
+  font-size: 23px;
+}
+
+.unit {
+  font-size: 18px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #4b5563;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease), transform .1s var(--ease);
+}
+
+.chip:hover:not(.active) {
+  border-color: var(--primary-bright);
+  color: var(--primary);
+}
+
+.chip:active {
+  transform: scale(.96);
+}
+
+.chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.choice-grid {
+  display: grid;
+  gap: 11px;
+}
+
+.choice {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 16px;
+  padding: 18px 17px;
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.45;
+  font-family: inherit;
+  color: var(--text);
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+
+.choice:hover {
+  border-color: var(--primary-bright);
+  box-shadow: 0 4px 10px rgba(18, 22, 25, .05);
+}
+
+.choice small {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* ---------- Sticky CTA footer (JOBDA 모바일 "지원하기" 고정바 벤치마킹) ---------- */
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: 32px;
+  padding: 16px 0 max(16px, env(safe-area-inset-bottom));
+  background: linear-gradient(to top, #fff 55%, rgba(255, 255, 255, 0));
+}
+
+.next {
+  width: 100%;
+  border: 0;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 12px;
+  padding: 18px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s var(--ease), transform .1s var(--ease);
+}
+
+.next:hover:not([disabled]) {
+  background: #048a3f;
+}
+
+.next:active:not([disabled]) {
+  transform: scale(.99);
+}
+
+.next[disabled] {
+  background: #dde0e4;
+  color: #a7acb4;
+  cursor: not-allowed;
+}
+
+.secondary {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 12px;
+  padding: 15px 18px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .15s var(--ease), color .15s var(--ease);
+}
+
+.secondary:hover {
+  border-color: var(--primary-bright);
+  color: var(--primary);
+}
+
+.tip {
+  margin-top: 18px;
+  padding: 15px 16px;
+  border-radius: 14px;
+  background: var(--surface);
+  color: #596576;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ---------- Demo scenario cards ---------- */
+
+.demo-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.demo-card {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 16px;
+  padding: 18px 17px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 8px 10px rgba(18, 22, 25, .03), 0 16px 25px rgba(18, 22, 25, .05);
+  transition: transform .15s var(--ease), box-shadow .15s var(--ease);
+}
+
+.demo-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 16px rgba(18, 22, 25, .05), 0 20px 32px rgba(18, 22, 25, .09);
+}
+
+.demo-card:active {
+  transform: translateY(0);
+}
+
+/* .demo-card는 우연히 "two" 클래스도 갖고 있어(시나리오 2),
+   폼 2단 그리드용 .two 규칙이 끼어드는 것을 명시적으로 차단 */
+.demo-card.one,
+.demo-card.two {
+  display: block;
+}
+
+.demo-card strong {
+  display: block;
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.demo-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.demo-card.one {
+  background: var(--orange-soft);
+  border-color: #fed7aa;
+}
+
+.demo-card.two {
+  background: var(--primary-soft);
+  border-color: #bfeecb;
+}
+
+.demo-badge {
+  display: inline-flex;
+  margin-bottom: 8px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, .08);
+}
+
+.scenario-note {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ---------- Candidate form ---------- */
+
+.candidate-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 8px 10px rgba(18, 22, 25, .03), 0 16px 25px rgba(18, 22, 25, .05);
+}
+
+.candidate-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.candidate-name {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f1f4f7;
+  color: #596273;
+}
+
+.field {
+  margin-top: 14px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.field input {
+  width: 100%;
+  border: 1px solid #d9dee6;
+  border-radius: 10px;
+  padding: 13px;
+  font-size: 16px;
+  outline: none;
+  font-family: inherit;
+  color: var(--text);
+  transition: border-color .15s var(--ease);
+}
+
+.field input:hover {
+  border-color: #b9c0ca;
+}
+
+.field input:focus {
+  border-color: var(--primary-bright);
+}
+
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--primary);
+  margin: 19px 0 7px;
+}
+
+.mini-help {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 6px;
+}
+
+.summary {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  margin-top: 18px;
+  background: var(--surface);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 9px 0;
+  border-top: 1px solid #edf0f3;
+  font-size: 14px;
+}
+
+.row:first-child {
+  border-top: 0;
+}
+
+.row span:first-child {
+  color: var(--muted);
+}
+
+.recovery-card {
+  border: 1px solid #bfeecb;
+  background: var(--primary-soft);
+  border-radius: 16px;
+  padding: 16px;
+  margin-top: 18px;
+  box-shadow: 0 8px 10px rgba(18, 22, 25, .03), 0 16px 25px rgba(18, 22, 25, .05);
+}
+
+.recovery-card b {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 5px;
+  color: var(--text);
+}
+
+.recovery-card p {
+  margin: 0;
+  color: #3d8a5b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.result-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+  margin-top: 12px;
+  box-shadow: 0 8px 10px rgba(18, 22, 25, .03), 0 16px 25px rgba(18, 22, 25, .05);
+}
+
+.result-card h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.scope {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  margin: 8px 0 13px;
+}
+
+.scope.growth {
+  background: var(--orange-soft);
+  color: var(--orange);
+}
+
+.scope.defense {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.metric {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 13px;
+}
+
+.metric .k {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.metric .v {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -.01em;
+}
+
+.focus {
+  margin-top: 11px;
+  border-left: 4px solid var(--primary);
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 12px 13px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.prefill {
+  display: inline-flex;
+  margin-top: 14px;
+  padding: 8px 12px;
+  background: var(--primary-soft);
+  border-radius: 999px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ---------- Recovery slider ---------- */
+
+.slider-wrap {
+  margin-top: 10px;
+  padding: 24px 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.slider-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.slider-value strong {
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--primary);
+  letter-spacing: -.02em;
+}
+
+.slider-value span {
+  font-size: 17px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.range {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--primary-bright) 0%,
+    var(--primary-bright) var(--range-progress, 65.7%),
+    #e4e9f0 var(--range-progress, 65.7%),
+    #e4e9f0 100%
+  );
+  outline: none;
+}
+
+.range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  border: 7px solid var(--primary-bright);
+  box-shadow: 0 2px 8px rgba(2, 197, 81, .25);
+  cursor: grab;
+  transition: transform .12s var(--ease);
+}
+
+.range:active::-webkit-slider-thumb {
+  transform: scale(1.08);
+  cursor: grabbing;
+}
+
+.range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 7px solid var(--primary-bright);
+  box-shadow: 0 2px 8px rgba(2, 197, 81, .25);
+  cursor: grab;
+  transition: transform .12s var(--ease);
+}
+
+.range:active::-moz-range-thumb {
+  transform: scale(1.08);
+  cursor: grabbing;
+}
+
+.range-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.range-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.range-shortcut {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 6px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  transition: border-color .15s var(--ease), background .15s var(--ease), color .15s var(--ease);
+}
+
+.range-shortcut:hover:not(.active) {
+  border-color: var(--primary-bright);
+}
+
+.range-shortcut.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* ---------- Field blocks / tags ---------- */
+
+.field-block {
+  margin-top: 36px;
+}
+
+/* 폼의 맨 첫 항목만 위 여백을 없앤다.
+   (펼쳐지는 그룹 안의 첫 항목까지 0이 되면 위 칩과 붙어버림) */
+.content > .field-block:first-child {
+  margin-top: 0;
+}
+
+.field-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  gap: 8px;
+}
+
+.field-block-label {
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.tag-req {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--primary);
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tag-opt {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-soft);
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ---------- Tooltip (JOBDA 드롭다운 fade+translateY 벤치마킹) ---------- */
+
+.info-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.info-icon {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: var(--muted);
+  background: none;
+  line-height: 0;
+  padding: 0;
+  cursor: pointer;
+  vertical-align: middle;
+  transform: translateY(-1px);
+  font-family: inherit;
+  transition: border-color .15s var(--ease), color .15s var(--ease);
+}
+
+.info-icon:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.tooltip-bubble {
+  --tt-shift: 0px;
+  position: absolute;
+  bottom: 145%;
+  left: 50%;
+  width: min(228px, calc(100vw - 48px));
+  background: #121619;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.55;
+  text-align: left;
+  padding: 11px 13px;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(18, 22, 25, .12), 0 8px 20px rgba(18, 22, 25, .18);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(calc(-50% + var(--tt-shift))) translateY(4px);
+  transition: opacity .16s var(--ease), transform .16s var(--ease);
+  pointer-events: none;
+  z-index: 20;
+}
+
+.tooltip-bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: calc(50% - var(--tt-shift));
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #121619;
+}
+
+.info-wrap.show .tooltip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(calc(-50% + var(--tt-shift))) translateY(0);
+  pointer-events: auto;
+}
+
+/* 펼침 애니메이션은 grid-template-rows(0fr→1fr)로 통일한다.
+   max-height 방식은 목표값(900px)이 실제 내용(420px)보다 훨씬 커서,
+   눈에 보이는 움직임이 초반에 끝나고 나머지 시간은 멈춘 것처럼 보였다. */
+.reveal-group {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .35s var(--ease), opacity .3s var(--ease);
+}
+
+.reveal-group.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.reveal-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ---------- Toggle switch (JOBDA 스타일 easing) ---------- */
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: none;
+  background: var(--surface);
+  border-radius: 13px;
+  padding: 13px 14px;
+  margin-bottom: 11px;
+  cursor: pointer;
+  transition: background .15s var(--ease);
+}
+
+.toggle-row:hover {
+  background: #eef1f5;
+}
+
+.toggle-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.switch {
+  width: 40px;
+  height: 23px;
+  background: #e4e9f0;
+  border-radius: 12px;
+  position: relative;
+  flex-shrink: 0;
+  transition: background .2s var(--ease);
+}
+
+.switch.on {
+  background: var(--primary-bright);
+}
+
+.knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .28);
+  transition: left .2s var(--ease);
+}
+
+.switch.on .knob {
+  left: 19px;
+}
+
+/* 여기는 부모(.reveal-group)도 grid라 중첩 시 행 크기가 함께 바뀌어 보간이 깨진다.
+   내용 높이(약 131px)에 가까운 상한을 둔 max-height가 오히려 자연스럽다. */
+.keymoney-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .25s var(--ease);
+}
+
+.keymoney-body.open {
+  max-height: 150px;
+}
+
+.keymoney-inner {
+  min-height: 0;
+}
+
+.input-line.error {
+  border-bottom-color: var(--danger);
+  animation: shake .3s ease;
+}
+
+.input-line.error input::placeholder {
+  color: var(--danger);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+
+.sum-box {
+  margin-top: 18px;
+  background: var(--primary-soft);
+  border-radius: 14px;
+  padding: 15px 17px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.sum-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.sum-value {
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: -.01em;
+}
+
+.add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  padding: 15px;
+  margin-top: 10px;
+  border: 1.5px dashed rgba(5, 155, 71, .35);
+  border-radius: 14px;
+  background: rgba(5, 155, 71, .045);
+  color: var(--primary);
+  font-size: 14.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s var(--ease);
+  font-family: inherit;
+}
+
+.add-btn:hover {
+  background: rgba(5, 155, 71, .09);
+}
+
+.add-btn.hidden {
+  display: none;
+}
+
+.plus-circle {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+.max-note {
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 9px;
+}
+
+.addr-row {
+  margin-bottom: 16px;
+}
+
+.addr-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.addr-row-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.addr-remove {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  transition: color .15s var(--ease), background .15s var(--ease);
+}
+
+.addr-remove:hover {
+  color: var(--danger);
+  background: #fdecec;
+}
+
+.addr-reveal {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height .3s var(--ease), opacity .25s var(--ease), margin-top .3s var(--ease);
+  margin-top: 0;
+}
+
+.addr-reveal.open {
+  max-height: 200px;
+  opacity: 1;
+  margin-top: 36px; /* .field-block 기본 간격과 동일 */
+}
+
+/* ---------- 후보지 아코디언 카드 ---------- */
+
+.cand-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* 스티키 "다음" 버튼이 마지막 카드를 덮지 않도록 확보 */
+  padding-bottom: 8px;
+}
+
+/* 포커스 모드: 펼친 카드만 남기고 나머지는 접는다 */
+.cand-card.is-hidden {
+  display: none;
+}
+
+.focus-crumb {
+  /* 한 문장이라 flex로 쪼개면 <b>와 뒷말 사이에 여분 간격이 생긴다 */
+  display: block;
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.focus-crumb b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.cand-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+
+.cand-card.open {
+  border-color: var(--primary-bright);
+  box-shadow: 0 8px 10px rgba(18, 22, 25, .03), 0 16px 25px rgba(18, 22, 25, .06);
+}
+
+.cand-head {
+  display: flex;
+  align-items: stretch;
+}
+
+.cand-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  padding: 16px 8px 16px 18px;
+  cursor: pointer;
+  position: relative;
+  transition: background .15s var(--ease);
+}
+
+.cand-toggle:hover {
+  background: var(--surface);
+}
+
+.cand-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.cand-summary {
+  font-size: 13.5px;
+  color: #a7acb4;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cand-summary.filled {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.cand-chevron {
+  position: absolute;
+  right: 14px;
+  top: 18px;
+  display: block;
+  line-height: 0;
+  color: var(--muted);
+  transition: transform .25s var(--ease);
+}
+
+.cand-card.open .cand-chevron {
+  transform: rotate(180deg);
+}
+
+.cand-delete {
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  line-height: 0;
+  cursor: pointer;
+  padding: 17px 14px 16px 26px;
+  border-radius: 8px;
+  transition: color .15s var(--ease);
+}
+
+.cand-delete:hover {
+  color: var(--danger);
+}
+
+/* 접힘/펼침 — grid-template-rows 전환이라 내용 높이를 미리 몰라도 됨 */
+.cand-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .3s var(--ease);
+}
+
+.cand-card.open .cand-body {
+  grid-template-rows: 1fr;
+}
+
+.cand-body-inner {
+  overflow: hidden;
+  min-height: 0;
+  /* 가로 패딩은 항상 유지 — .open일 때만 주면 접히는 순간 내용 폭이 36px 넓어지면서
+     줄바꿈이 다시 일어나 내용이 잘린 것처럼 보인다. */
+  padding-inline: 18px;
+}
+
+/* 세로 패딩만 펼침 상태에 둔다. 접혔을 때 높이가 0으로 유지되고,
+   가로 폭은 그대로라 줄바꿈이 다시 일어나지 않는다. */
+.cand-card.open .cand-body-inner {
+  padding-block: 4px 18px;
+}
+
+.cand-done {
+  width: 100%;
+  margin-top: 22px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--primary);
+  color: #fff;
+  padding: 14px 16px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .15s var(--ease);
+}
+
+.cand-done:hover:not([disabled]) {
+  background: #048a3f;
+}
+
+.cand-done[disabled] {
+  background: #dde0e4;
+  color: #a7acb4;
+  cursor: not-allowed;
+}
+
+/* ---------- Focus-visible (완전 웹 서비스: 키보드 내비게이션 대응) ---------- */
+
+button:focus-visible,
+input:focus-visible,
+.chip:focus-visible,
+.demo-card:focus-visible,
+.choice:focus-visible {
+  outline: 2px solid var(--primary-bright);
+  outline-offset: 2px;
+}
+
+/* ---------- Responsive breakpoints ---------- */
+
+@media (min-width: 768px) {
+  :root {
+    --content-w: 680px;
+    --header-h: 98px;
+  }
+
+  .page {
+    padding: 56px 32px 48px;
+  }
+
+  .appbar-row {
+    padding: 16px 32px 12px;
+  }
+
+  .progress-wrap {
+    padding: 0 32px 14px;
+  }
+
+  h1 {
+    font-size: 38px;
+  }
+
+  .footer {
+    background: linear-gradient(to top, #fff 60%, rgba(255, 255, 255, 0));
+  }
+}
+
+@media (min-width: 860px) {
+  :root {
+    --content-w: 980px;
+  }
+
+  /* 좌우 분할 폼은 화면 폭이 넉넉해지므로 한 단계 더 키움 */
+  h1 {
+    font-size: 42px;
+  }
+
+  .sub {
+    font-size: 17px;
+  }
+
+  .input-line input {
+    font-size: 40px;
+  }
+
+  .input-line.text input {
+    font-size: 26px;
+  }
+
+  .slider-value strong {
+    font-size: 48px;
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --header-h: 76px;
+  }
+
+  .page {
+    padding: 28px 20px 24px;
+  }
+
+  .appbar-row {
+    padding: 12px 20px 8px;
+  }
+
+  .progress-wrap {
+    padding: 0 20px 10px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen.step-enter,
+  .demo-card,
+  .next,
+  .chip {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ---------- 백엔드 분석 실패 시 온보딩 상단에 표시 ---------- */
+
+.onboarding-error {
+  margin-bottom: 18px;
+  padding: 13px 15px;
+  border-radius: 12px;
+  background: #fdecec;
+  border: 1px solid #f5c6c6;
+  color: #b3373b;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.55;
+}
