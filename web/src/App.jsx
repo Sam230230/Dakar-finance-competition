@@ -13,7 +13,6 @@ import LoadingScreen from "./onboarding/steps/LoadingScreen.jsx";
 import { blankState, scenario, labels, toStayMovePayload } from "./onboarding/logic.js";
 import "./styles.css";
 import "./onboarding/onboarding.css";
-import "./result/result.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8001";
 

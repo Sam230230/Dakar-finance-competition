@@ -8,18 +8,42 @@ const COLORS = { current: "#121619", A: "#046B36", B: "#02C551", C: "#8CDCB0" };
 const INK = { current: "#fff", A: "#fff", B: "#062B16", C: "#062B16" };
 
 export default function MapView({ current, candidates = [], selectedId = null, activeKey = null, showBoundaries = false, onMapClick }) {
-  const elRef = useRef(null);
+  const hostRef = useRef(null);
+  // 네이버 SDK는 컨테이너 안에 자기 DOM을 직접 심는다. React가 렌더한 노드에 그대로
+  // 심으면 언마운트할 때 React가 모르는 자식을 만나 리컨실리에이션이 터진다
+  // (Cannot read properties of null (reading 'isArray')).
+  // 그래서 지도는 React 바깥에서 만든 자식 div 안에서만 살게 한다.
+  const innerRef = useRef(null);
   const mapRef = useRef(null);
   const overlaysRef = useRef([]);
   const clickListenerRef = useRef(null);
   const [error, setError] = useState("");
+  // 한 번 실패했다고 세션 내내 포기하지 않는다. 값이 바뀌면 로더를 다시 태운다.
+  const [attempt, setAttempt] = useState(0);
+
+  // 탭이 가려진 동안 SDK 로딩이 스로틀돼 실패했다면, 화면이 다시 보일 때 재시도한다.
+  useEffect(() => {
+    if (!error) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setAttempt((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [error]);
 
   useEffect(() => {
     let cancelled = false;
+    setError("");
     loadNaverMaps(KEY_ID)
       .then((naver) => {
-        if (cancelled || !elRef.current) return;
-        const map = new naver.maps.Map(elRef.current, {
+        if (cancelled || !hostRef.current) return;
+        innerRef.current?.remove();
+        const inner = document.createElement("div");
+        inner.style.width = "100%";
+        inner.style.height = "100%";
+        hostRef.current.appendChild(inner);
+        innerRef.current = inner;
+        const map = new naver.maps.Map(inner, {
           center: new naver.maps.LatLng(37.5563, 126.9140),
           zoom: 14,
           zoomControl: true,
@@ -36,13 +60,20 @@ export default function MapView({ current, candidates = [], selectedId = null, a
         });
         renderOverlays();
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      });
     return () => {
       cancelled = true;
       if (window.naver?.maps && clickListenerRef.current) window.naver.maps.Event.removeListener(clickListenerRef.current);
+      clear();
+      mapRef.current = null;
+      // React가 이 노드를 치우기 전에 우리가 만든 자식을 우리가 걷어낸다.
+      innerRef.current?.remove();
+      innerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [attempt]);
 
   useEffect(() => { renderOverlays(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [current, candidates, selectedId, activeKey, showBoundaries]);
 
@@ -100,9 +131,18 @@ export default function MapView({ current, candidates = [], selectedId = null, a
   }
 
   if (error) {
-    return <div className="map-error"><div><strong>네이버 지도를 불러오지 못했습니다.</strong><span>{error}</span><small>Application에서 Web Dynamic Map이 활성화되어 있고, Web 서비스 URL이 <b>http://localhost</b>로 등록되어 있는지 확인하세요. .env 수정 후에는 Vite를 반드시 재시작해야 합니다.</small></div></div>;
+    return (
+      <div className="map-error">
+        <div>
+          <strong>네이버 지도를 불러오지 못했어요.</strong>
+          <span>{error}</span>
+          <button type="button" className="map-retry" onClick={() => setAttempt((n) => n + 1)}>다시 불러오기</button>
+          <small>Application에서 Web Dynamic Map이 활성화되어 있고, Web 서비스 URL이 <b>http://localhost</b>로 등록되어 있는지 확인해 주세요. .env를 고쳤다면 Vite를 다시 시작해야 해요.</small>
+        </div>
+      </div>
+    );
   }
-  return <div ref={elRef} className="naver-map-canvas" aria-label="NAVER 지도" />;
+  return <div ref={hostRef} className="naver-map-canvas" aria-label="NAVER 지도" />;
 }
 
 function escapeHtml(value) {
