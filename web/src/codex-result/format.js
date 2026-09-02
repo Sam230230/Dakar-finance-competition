@@ -30,4 +30,30 @@ export function signed(value, digits = 1) {
   return `${num > 0 ? "+" : ""}${num.toFixed(digits)}%`;
 }
 
+/** 사람 수. 만 단위로 접어 읽기 쉽게 한다 (744,376 → "74.4만"). */
+export function headcount(value) {
+  const num = toNumber(value);
+  if (num == null) return EMPTY;
+  if (Math.abs(num) < 10000) return num.toLocaleString("ko-KR");
+  return `${(num / 10000).toFixed(1)}만`;
+}
+
+/** 만원 단위 금액을 읽을 수 있는 크기로 접는다 (3,260 → "3,260만", 5,713,530 → "571억").
+ *
+ * 사용자가 입력하고 판단하는 돈(내 매출, 이전비)은 A-8 대로 만원 고정이다.
+ * 이건 자치구 전체 시장 규모처럼 자릿수가 다른 값 전용 — 만원으로 쓰면
+ * "5,713,530만"이 되어 읽을 수가 없다. */
+export function scaledWon(manwon) {
+  const num = toNumber(manwon);
+  if (num == null) return EMPTY;
+  const abs = Math.abs(num);
+  if (abs < 10000) return `${Math.round(num).toLocaleString("ko-KR")}만`;
+  return `${(num / 10000).toLocaleString("ko-KR", { maximumFractionDigits: abs < 100000 ? 1 : 0 })}억`;
+}
+
+/** 숫자로 읽을 수 있는 값이 실제로 왔는지. 0 과 "없음"을 구분한다. */
+export function hasValue(value) {
+  return toNumber(value) != null;
+}
+
 export { toNumber, EMPTY };

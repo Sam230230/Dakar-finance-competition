@@ -64,7 +64,8 @@ function buildItems(data) {
 
   return [
     // 이전 버튼을 없앴으므로 시작 화면 복귀는 이 항목이 맡는다
-    { cur: 0, label: "시작", value: data.demoScenario ? `시나리오 ${data.demoScenario}` : "직접 입력" },
+    // demoScenario 0(최신 데이터)은 falsy 라서 존재 여부로 판단하면 "직접 입력"이 된다.
+    { cur: 0, label: "시작", value: scenarioLabel(data.demoScenario) },
     { cur: 1, label: "현재 매장 위치", value: data.current.address || null },
     { cur: 2, label: "월평균 매출", value: data.current.sales != null ? money(data.current.sales) : null },
     { cur: 3, label: "월 변동비", value: data.current.variable != null ? money(data.current.variable) : null },
@@ -143,6 +144,12 @@ function LiveMetric({ data, cur }) {
       </div>
     </div>
   );
+}
+
+/** 시작 단계에 보여줄 이름. 0 은 최신 데이터 시나리오라 숫자로 붙이지 않는다. */
+function scenarioLabel(n) {
+  if (n === 0) return "최신 데이터";
+  return n ? `시나리오 ${n}` : "직접 입력";
 }
 
 export default function LiveSummaryPanel({ data, cur, onJump }) {

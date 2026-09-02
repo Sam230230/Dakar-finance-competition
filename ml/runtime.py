@@ -18,6 +18,7 @@ no external API call happens during /staymove.
 """
 from __future__ import annotations
 
+import calendar
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -195,6 +196,53 @@ def _district_sales_history(district: Optional[str], n: int = 8) -> list[dict]:
     return [{"quarter": int(r.stdr_yyqu), "monthly_sales": round(float(r.monthly_sales))} for r in sub.itertuples()]
 
 
+def _quarter_day_count(value: int) -> int:
+    """YYYYQ 또는 YYYY0Q 형태의 분기 코드에서 실제 달력 일수를 구한다."""
+    text = str(int(value))
+    year = int(text[:4])
+    quarter = int(text[-1])
+    if quarter not in (1, 2, 3, 4):
+        raise ValueError(f"invalid quarter code: {value}")
+    start_month = (quarter - 1) * 3 + 1
+    return sum(calendar.monthrange(year, month)[1] for month in range(start_month, start_month + 3))
+
+
+def _district_footfall(district: Optional[str], n: int = 8) -> dict:
+    """최근 분기 자치구 상권 유동인구 실측값과 직전 분기 대비 변화율.
+
+    district_panel_real.csv 의 flow_pop 은 그 분기 자치구 내 전체 상권의 유동인구 합계다.
+    상권(TRDAR) 단위가 아니므로 호출부가 라벨에 자치구 기준임을 명시해야 한다.
+    분기 합계는 체감이 어려워 해당 분기의 실제 달력 일수로 나눈 일평균을 함께 내려보낸다.
+    """
+    if not district:
+        return {"flow_pop": None, "flow_pop_daily": None, "flow_pop_qoq_pct": None, "flow_pop_quarter": None, "flow_pop_history": []}
+    panel = _district_panel()
+    if panel.empty:
+        return {"flow_pop": None, "flow_pop_daily": None, "flow_pop_qoq_pct": None, "flow_pop_quarter": None, "flow_pop_history": []}
+    sub = panel[panel["signgu"] == district].sort_values("stdr_yyqu")
+    if sub.empty:
+        return {"flow_pop": None, "flow_pop_daily": None, "flow_pop_qoq_pct": None, "flow_pop_quarter": None, "flow_pop_history": []}
+    latest = sub.iloc[-1]
+    flow = float(latest["flow_pop"])
+    # 최근 n분기 추세. 분기 합계가 아니라 일평균으로 내려 화면이 다시 나누지 않게 한다.
+    history = [
+        {
+            "quarter": int(r.stdr_yyqu),
+            "daily": round(float(r.flow_pop) / _quarter_day_count(int(r.stdr_yyqu))),
+        }
+        for r in sub.tail(n).itertuples()
+    ]
+    latest_daily = history[-1]["daily"]
+    previous_daily = history[-2]["daily"] if len(history) >= 2 else None
+    return {
+        "flow_pop": round(flow),
+        "flow_pop_daily": latest_daily,
+        "flow_pop_qoq_pct": round((latest_daily / previous_daily - 1) * 100, 1) if previous_daily else None,
+        "flow_pop_quarter": int(latest["stdr_yyqu"]),
+        "flow_pop_history": history,
+    }
+
+
 def market_observed(trdar_cd: Optional[str], industry_code: str, district: Optional[str]) -> dict:
     from data_sources.seoul_market import lookup_metric
 
@@ -210,13 +258,16 @@ def market_observed(trdar_cd: Optional[str], industry_code: str, district: Optio
     trend_pct = float(trend_row["quarterly_growth_pct"]) if trend_row is not None else None
     trend_label = str(trend_row["trend"]) if trend_row is not None else None
     sales_history = _district_sales_history(district)
+    footfall = _district_footfall(district)
 
     if not row:
         return {
             "status": "no_snapshot", "close_rate": None, "open_rate": None, "sales_yoy": None,
             "avg_open_months": None, "avg_closed_months": None,
+            "store_count": None, "franchise_count": None, "franchise_share": None,
+            "change_index": None, "change_name": None, "competition_grain": None,
             "sales_trend": trend_label, "sales_trend_pct": trend_pct, "sales_history": sales_history,
-            "sales_history_grain": "district",
+            "sales_history_grain": "district", "flow_pop_grain": "district", **footfall,
         }
     return {
         "status": "ok",
@@ -226,9 +277,19 @@ def market_observed(trdar_cd: Optional[str], industry_code: str, district: Optio
         "sales_trend_pct": trend_pct,
         "avg_open_months": row.avg_open_months,
         "avg_closed_months": row.avg_closed_months,
+        # 경쟁 지표 — 이 상권(TRDAR) 단위 동종업종 실측 점포수. 모델 추정값이 아니다.
+        "store_count": row.store_count,
+        "franchise_count": row.franchise_count,
+        "franchise_share": (round(row.franchise_count / row.store_count * 100, 1)
+                            if row.store_count and row.franchise_count is not None else None),
+        "change_index": row.change_index,
+        "change_name": row.change_name,
+        "competition_grain": "trdar",
         "sales_trend": trend_label,
         "sales_history": sales_history,
         "sales_history_grain": "district",
+        "flow_pop_grain": "district",
+        **footfall,
         "snapshot_period": {"sales": row.sales_period, "stores": row.store_period, "change": row.change_period},
     }
 
@@ -332,6 +393,9 @@ def predict_candidate(
         ml = {
             "status": "ok",
             "predicted_monthly_sales": round(per_store),
+            # 점포당 값과 달리 자치구 단위 예측값은 sales_history 와 같은 축이라
+            # 관측 시계열 뒤에 그대로 이어 그릴 수 있다. 둘을 섞어 쓰지 않도록 키를 따로 둔다.
+            "predicted_district_sales": round(district_pred["predicted_district_sales"]),
             "model_source": "real",
             "model_name": district_pred["model_name"],
             "data_completeness": redistribution["data_completeness"],
@@ -342,24 +406,25 @@ def predict_candidate(
             "prediction_outlier": outlier["prediction_outlier"],
             "outlier_reason": outlier["reason"],
             "caution": (
-                "예상매출은 서울시 실제 상권 데이터를 기반으로 학습한 모델의 추정치입니다."
+                "예상매출은 서울시 실제 상권 데이터를 기반으로 학습한 모델의 추정치예요."
                 if redistribution["data_completeness"] == "trdar_exact" else
-                "이 상권은 자치구 단위 평균으로 대체 추정한 값입니다(해당 상권의 개별 매출 스냅샷 없음)."
+                "이 상권은 자치구 단위 평균으로 대체해 추정한 값이에요. 해당 상권의 개별 매출 스냅샷은 없어요."
             ),
         }
         if outlier["prediction_outlier"]:
-            ml["caution"] += f" 참고: 이 상권은 실측 매출밀도 분포에서 통계적으로 매우 극단적인 값입니다({outlier['reason']}) — 임의로 보정하지 않고 원값 그대로 표시합니다."
+            ml["caution"] += f" 이 상권은 실측 매출밀도 분포에서 통계적으로 매우 극단적인 값이에요({outlier['reason']}). 임의로 보정하지 않고 원값 그대로 보여줘요."
     else:
         fallback = _predict_synthetic_fallback(district, industry)
         ml = {
             "status": "ok" if fallback else "model_unavailable",
             "predicted_monthly_sales": fallback["predicted_monthly_sales"] if fallback else None,
+            "predicted_district_sales": None,
             "model_source": "synthetic_fallback",
             "model_name": fallback["model_name"] if fallback else None,
             "data_completeness": "synthetic_fallback",
             "caution": (
-                "⚠ 실제 상권 데이터 기반 모델을 불러오지 못해 합성(시뮬레이션) 데이터로 학습된 예전 모델을 "
-                "임시로 사용했습니다. 이 예측은 실제 서울 상권 데이터와 무관하니 참고하지 마세요."
+                "실제 상권 데이터 기반 모델을 불러오지 못해 합성 데이터로 학습한 예전 모델을 임시로 사용했어요. "
+                "실제 서울 상권 데이터와 무관해 판단 근거로 쓰면 안 돼요."
             ),
         }
 

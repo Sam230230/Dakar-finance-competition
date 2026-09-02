@@ -13,6 +13,15 @@ export default function Start({ onScenario, onBlank }) {
       </p>
 
       <div className="content">
+        <button className="demo-card latest" onClick={() => onScenario(0)}>
+          <span className="demo-badge">최신 데이터</span>
+          <strong>실제 양도양수 매물로 확인하는 경우</strong>
+          <small>
+            강동구 카페를 송파구 은평구 금천구 매물과 견줍니다.
+            2026년 9월 기준 실매물 값이라 권리금과 보증금 규모가 앞선 두 시나리오보다 훨씬 큽니다.
+          </small>
+        </button>
+
         <div className="demo-grid">
           <button className="demo-card one" onClick={() => onScenario(1)}>
             <span className="demo-badge">시나리오 1</span>

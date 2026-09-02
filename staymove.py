@@ -294,7 +294,25 @@ def analyze(payload: dict, use_rag: bool = True, use_ml: bool = True) -> dict:
             "additional_fund_needed_krw": int(round(additional_fund_needed * 10_000)),
             "net_deposit_change": round(res.net_deposit_change),
             "actual_relocation_cost": round(res.actual_relocation_cost),
+            # 합계가 어떤 값들로 이뤄졌는지 화면에서 펼쳐 볼 수 있게 구성 항목을 함께 내려보낸다.
+            # 휴업손실은 사용자가 직접 넣은 값이 아니라 휴업일수로 계산한 값이라 따로 담는다.
+            "relocation_cost_items": [
+                {"label": "인테리어", "amount": round(c.interior_cost)},
+                {"label": "이사", "amount": round(c.moving_cost)},
+                {"label": "원상복구", "amount": round(c.restoration_cost)},
+                {"label": "권리금", "amount": round(c.rights_fee)},
+                {"label": "기타", "amount": round(c.other_moving_cost)},
+                {"label": f"휴업 {c.closed_days}일", "amount": round(res.actual_relocation_cost
+                                                                    - c.interior_cost - c.moving_cost
+                                                                    - c.restoration_cost - c.rights_fee
+                                                                    - c.other_moving_cost)},
+            ],
             "candidate_fixed_cost": round(res.candidate_fixed_cost),
+            "operating_cost_items": [
+                {"label": "월세", "amount": round(c.monthly_rent)},
+                {"label": "관리비", "amount": round(c.maintenance_fee)},
+                {"label": "기타 고정비", "amount": round(c.other_fixed_cost)},
+            ],
             "target_months": recovery_months,
             "recovery_relevance": "primary" if analysis_mode == "cost_recovery" else "secondary",
             "target_periods": target_periods_out,

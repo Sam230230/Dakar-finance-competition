@@ -38,6 +38,27 @@ export function lowerOrEqualCandidates(state) {
 }
 
 export function scenario(n) {
+  // 최신 데이터 — 2026-09-02 jc1004.co.kr 양도양수 매물(투썸플레이스) 기준.
+  // 현재 강동구, 후보는 송파구 은평구 금천구. 상세 지번은 매물 특성상 비공개라 자치구까지만 넣는다.
+  // 월 변동비는 월지출에서 고정비를 뺀 값이고, 고정비 항목별 배분과 가용현금은 추정치다.
+  if (n === 0) {
+    return {
+      demoScenario: 0,
+      current: {
+        address: "서울 강동구",
+        sales: 5200, variable: 3600,
+        rent: 300, labor: 200, mgmt: 50, fixed: 550,
+        cash: 5000, depositReturn: 10000, keyMoneyRecovery: 21000
+      },
+      candidateCount: 3,
+      candidates: [
+        { address: "서울 송파구", rent: 270, management: 70, otherFixed: 110, deposit: 7000, interior: 1300, moving: 250, restoration: 700, rights: 19000, otherMove: 100, closedDays: 10 },
+        { address: "서울 은평구", rent: 300, management: 75, otherFixed: 125, deposit: 8000, interior: 1200, moving: 250, restoration: 700, rights: 16000, otherMove: 100, closedDays: 10 },
+        { address: "서울 금천구", rent: 600, management: 150, otherFixed: 250, deposit: 12000, interior: 750, moving: 250, restoration: 700, rights: 3000, otherMove: 100, closedDays: 10 }
+      ],
+      recoveryMonths: null
+    };
+  }
   if (n === 1) {
     return {
       demoScenario: 1,

@@ -98,6 +98,24 @@ def test_market_observed_matches_sqlite_row_exactly():
     assert obs["avg_closed_months"] == row.avg_closed_months
 
 
+def test_quarter_day_count_uses_calendar_days():
+    from ml.runtime import _quarter_day_count
+    assert _quarter_day_count(20261) == 90
+    assert _quarter_day_count(20262) == 91
+    assert _quarter_day_count(20263) == 92
+    assert _quarter_day_count(20264) == 92
+    assert _quarter_day_count(202401) == 91  # 윤년 1분기
+
+
+def test_footfall_qoq_compares_daily_averages():
+    from ml.runtime import _district_footfall
+    observed = _district_footfall("마포구", n=2)
+    history = observed["flow_pop_history"]
+    assert len(history) == 2
+    expected = round((history[-1]["daily"] / history[-2]["daily"] - 1) * 100, 1)
+    assert observed["flow_pop_qoq_pct"] == expected
+
+
 def test_no_hardcoded_district_branches_in_runtime_source():
     """범용성 요구사항 — 특정 자치구/후보에 대한 if-분기나 보정계수가 코드에 없어야 한다."""
     source = (Path(__file__).parent / "runtime.py").read_text(encoding="utf-8")

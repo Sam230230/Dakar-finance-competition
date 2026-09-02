@@ -892,6 +892,20 @@ h1 {
   border-color: #bfeecb;
 }
 
+/* 최신 데이터는 실제 매물값이라 맨 위에 따로 세운다.
+   시나리오 색(오렌지, 그린)을 늘리지 않고 테두리 굵기로만 구분한다. */
+.demo-card.latest {
+  margin-bottom: 12px;
+  padding: 17px 16px;
+  border: 2px solid var(--text);
+}
+
+.demo-card.latest .demo-badge {
+  background: var(--text);
+  border-color: var(--text);
+  color: #fff;
+}
+
 .demo-badge {
   display: inline-flex;
   margin-bottom: 8px;
