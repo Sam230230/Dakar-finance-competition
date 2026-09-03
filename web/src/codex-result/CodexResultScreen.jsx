@@ -32,13 +32,119 @@ import {
   LabelList,
   Line,
   ReferenceArea,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import MapView from "../MapView";
+
+/**
+ * 차트에 넘기는 색은 CSS 토큰을 읽을 수 없어 여기 모아 둔다.
+ * 값은 codex-result.css 의 .cx-report 토큰과 짝이 맞아야 한다.
+ * 메인 초록(brand)은 추천 후보를 가리킬 때만 쓴다. 나머지 후보는 연한 초록이나
+ * 중립 회색에 점선을 얹어 가른다 (색만으로 구분하지 않기 위해서다).
+ */
+const CHART = {
+  brand: "#02c551",        // 추천 후보 전용
+  brandSoft: "rgba(2,197,81,.45)", // 추천이 아닌 후보. 같은 브랜드 초록을 옅게 깔아 구분한다
+  green: "#02c551",        // 글자와 선에 쓰는 초록
+  risk: "#c0272c",
+  neutral: "#8a919b",
+  baselineBar: "#c9ccd0",
+  step1: "#e2e5ea",
+  step2: "#8a919b",
+  grid: "#e7e8ea",
+  axis: "#c9ccd0",
+  label: "#5b6168",
+  weak: "#6c737d",
+  ink: "#121619",
+  onDarkWeak: "#c7ccd4",
+  white: "#ffffff",
+};
+
+/** 후보 하나를 가리키는 색. 추천만 메인 초록을 가져간다. */
+const candidateColor = (isRecommended) => (isRecommended ? CHART.brand : CHART.neutral);
+
+/**
+ * 값 하나를 길이로 보여주는 한 칸 막대. 예전에는 CSS 로 그렸는데
+ * 결과지 안의 그림을 recharts 한 종류로 모으려고 차트로 바꿨다.
+ */
+function MiniBar({ value, max, color, height = 14, label }) {
+  const safe = Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+  return (
+    <div className="cx-mini-chart" role="img" aria-label={label}>
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart data={[{ name: "v", value: safe }]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+          <XAxis type="number" domain={[0, max]} hide />
+          <YAxis type="category" dataKey="name" hide />
+          <Bar
+            dataKey="value"
+            fill={color}
+            barSize={height - 6}
+            radius={[999, 999, 999, 999]}
+            background={{ fill: CHART.grid, radius: 999 }}
+            isAnimationActive={false}
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** 여러 조각을 이어 붙인 한 줄 막대. 합계에서 각 조각이 차지하는 몫을 본다. */
+function MiniStack({ segments, total, height = 16, label }) {
+  const row = segments.reduce((acc, seg) => ({ ...acc, [seg.key]: Math.max(0, Number(seg.value) || 0) }), { name: "v" });
+  const last = segments.length - 1;
+  return (
+    <div className="cx-mini-chart" role="img" aria-label={label}>
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+          <XAxis type="number" domain={[0, total]} hide />
+          <YAxis type="category" dataKey="name" hide />
+          {segments.map((seg, index) => (
+            <Bar
+              key={seg.key}
+              dataKey={seg.key}
+              stackId="one"
+              fill={seg.color}
+              barSize={height}
+              radius={index === 0 ? [5, 0, 0, 5] : index === last ? [0, 5, 5, 0] : 0}
+              isAnimationActive={false}
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** 서울시 상권변화지표는 0~1 연속값이 아니라 HH/LH/HL/LL 네 분류다.
+ *  그래서 눈금 네 칸짜리 가로 막대에 점 하나만 찍는다 — 왼쪽일수록 점포 교체가
+ *  느려 예측 가능하고(안정), 오른쪽일수록 진입·퇴출이 빨라 변동이 크다(불안정). */
+function StabilityScale({ position, color, label }) {
+  return (
+    <div className="cx-mini-chart" role="img" aria-label={label}>
+      <ResponsiveContainer width="100%" height={16}>
+        <ScatterChart margin={{ top: 5, right: 7, bottom: 5, left: 7 }}>
+          <XAxis type="number" dataKey="x" domain={[0, CHANGE_SCALE.length - 1]} hide />
+          <YAxis type="number" dataKey="y" domain={[-1, 1]} hide />
+          <ReferenceLine y={0} stroke={CHART.baselineBar} strokeWidth={2.2} />
+          {CHANGE_SCALE.map((code, i) => (
+            <ReferenceDot key={code} x={i} y={0} r={2.5} fill={CHART.white} stroke={CHART.neutral} strokeWidth={1.8} />
+          ))}
+          {position !== null && (
+            <Scatter data={[{ x: position, y: 0 }]} fill={color} shape="circle" isAnimationActive={false} />
+          )}
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 import { hasValue, headcount, money, percent, scaledWon, signed } from "./format";
 
 // 탭 하나가 질문 하나에 답한다. 이름만 보고 안에 무엇이 있는지 알 수 있게 나눈다.
@@ -121,21 +227,36 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
     const lift = data?.current_monthly_sales
       ? (selected.min_required_sales / data.current_monthly_sales - 1) * 100
       : null;
+    const payback = selected.scenarios?.[0];
+    const monthlyGain = Number(payback?.monthly_gain);
+    const paybackMonths = Number(payback?.payback_months);
+    const paybackYears = Number.isFinite(paybackMonths) ? Math.round(paybackMonths / 12) : null;
     return [
       {
         label: "필요한 매출 변화",
-        value: lift == null ? "확인 불가" : lift <= 0 ? `${Math.abs(lift).toFixed(1)}% 낮아도 돼요` : `${lift.toFixed(1)}% 더 필요해요`,
+        value: lift == null ? "확인 불가" : lift <= 0
+          ? <><b>{Math.abs(lift).toFixed(1)}%</b> 낮아도 돼요</>
+          : <><b>{lift.toFixed(1)}%</b> 더 필요해요</>,
         detail: `현재 ${money(data?.current_monthly_sales)}만원에서 최소 ${money(selected.min_required_sales)}만원이 필요해요.`,
       },
       {
         label: "추가로 마련할 돈",
-        value: selected.additional_fund_needed > 0 ? `${money(selected.additional_fund_needed)}만원 필요해요` : "지금 가진 돈으로 가능해요",
+        value: selected.additional_fund_needed > 0
+          ? <><b>{money(selected.additional_fund_needed)}만원</b> 필요해요</>
+          : "지금 가진 돈으로 가능해요",
         detail: `이전 소요자금 ${money(selected.initial_capital)}만원 중 ${money(selected.available_self_fund)}만원을 바로 쓸 수 있어요.`,
       },
       {
         label: "회수 예상",
-        value: selected.scenarios?.[0]?.payback_months ? `약 ${selected.scenarios[0].payback_months}개월이에요` : "계산할 수 없어요",
-        detail: `현재 매출을 유지한다고 보고 ${selected.target_months || data?.target_recovery_months || 24}개월 목표와 비교했어요.`,
+        value: Number.isFinite(monthlyGain) && monthlyGain > 0
+          ? <><b>월 {money(monthlyGain)}만원</b> 더 남아요</>
+          : "매달 남는 돈이 늘지 않아요",
+        detail: paybackYears === null
+          ? "실제 이전비를 회수할 수 있는 개선액이 아직 없어요."
+          : `실제 이전비를 회수하는 데 약 ${paybackYears}년 걸려요.`,
+        formula: Number.isFinite(monthlyGain) && monthlyGain > 0 && Number.isFinite(paybackMonths)
+          ? { monthlyGain }
+          : null,
       },
     ];
   }, [data, selected]);
@@ -145,7 +266,7 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
       <header className="cx-topbar">
         <a className="cx-brand" href="#top" aria-label="Stay or Move 결과지 맨 위로">stay or move</a>
         <p>후보지 분석 결과</p>
-        <button type="button" onClick={onRestart}><RotateCcw size={16} /> 다시 분석</button>
+        <button type="button" onClick={onRestart}><RotateCcw size={15} /> 다시 분석</button>
       </header>
 
       <div className="cx-shell" id="top">
@@ -162,7 +283,7 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
               <section className="cx-location-card" aria-labelledby="location-map-title">
                 <div className="cx-section-head">
                   <div><h2 id="location-map-title">지금 자리와 후보 자리를 지도에서 봐요</h2></div>
-                  <span className="cx-help"><MapPin size={14} aria-hidden="true" /> 상권 경계 표시</span>
+                  <span className="cx-help"><MapPin size={15} aria-hidden="true" /> 상권 경계 표시</span>
                 </div>
                 <div className="cx-map-frame">
                   <MapView current={mapCurrent} candidates={mapCandidates} selectedId={selected.site_id} showBoundaries />
@@ -182,7 +303,7 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
                     title="다시 보지 않기"
                     aria-label="안내 끄기"
                   >
-                    <X size={14} strokeWidth={2.4} aria-hidden="true" />
+                    <X size={15} strokeWidth={2.2} aria-hidden="true" />
                   </button>
                 </div>
               )}
@@ -268,7 +389,7 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
             <p>입력한 조건이 달라지면 결과도 달라져요.</p>
             <strong>임대료나 가용현금을 바꿔 다시 비교할 수 있어요.</strong>
           </div>
-          <button type="button" onClick={onRestart}>조건 바꿔보기 <ArrowUpRight size={17} /></button>
+          <button type="button" onClick={onRestart}>조건 바꿔보기 <ArrowUpRight size={15} /></button>
         </section>
       </div>
     </main>
@@ -331,7 +452,7 @@ function AiInsight({ candidate, overall, aiState }) {
 
       {overall?.main_risk && (
         <p className="cx-ai-risk">
-          <CircleAlert size={16} strokeWidth={2.2} aria-hidden="true" />
+          <CircleAlert size={15} strokeWidth={2.2} aria-hidden="true" />
           <span>{overall.main_risk}</span>
         </p>
       )}
@@ -341,14 +462,13 @@ function AiInsight({ candidate, overall, aiState }) {
           <h3>직접 확인할 것</h3>
           <ul>
             {checks.map((item, i) => (
-              <li key={i}><Check size={15} strokeWidth={2.4} aria-hidden="true" /><span>{item}</span></li>
+              <li key={i}><Check size={15} strokeWidth={2.2} aria-hidden="true" /><span>{item}</span></li>
             ))}
           </ul>
         </div>
       )}
 
       {overall?.reason && <p className="cx-plain-note">{overall.reason}</p>}
-      <p className="cx-data-source">출처: Rule Engine 계산값, ML 분석값, 정책금융 검색 결과를 바탕으로 생성한 AI 해석</p>
     </section>
   );
 }
@@ -484,14 +604,14 @@ function MarginCard({ data, candidate, fallbackBuffer }) {
         {rows.map((row) => (
           <div className="cx-margin-row" key={row.key}>
             <div className="cx-margin-lab"><span>{row.label}</span><em>{percent(row.pct)}</em></div>
-            <div
-              className={`cx-margin-bar${row.tone}`}
-              role="img"
-              aria-label={`${row.label} 판 돈의 ${percent(row.pct)}가 손에 남아요`}
-            >
-              <span className="is-cost" style={{ flexGrow: clamp(100 - row.pct) }} />
-              <span className="is-keep" style={{ flexGrow: clamp(row.pct) }} />
-            </div>
+            <MiniStack
+              total={100}
+              label={`${row.label} 판 돈의 ${percent(row.pct)}가 손에 남아요`}
+              segments={[
+                { key: "cost", value: clamp(100 - row.pct), color: CHART.step2 },
+                { key: "keep", value: clamp(row.pct), color: row.key === "now" ? CHART.brandSoft : CHART.green },
+              ]}
+            />
           </div>
         ))}
       </div>
@@ -500,6 +620,30 @@ function MarginCard({ data, candidate, fallbackBuffer }) {
         <span><i className="is-keep" />손에 남는 돈</span>
       </div>
     </aside>
+  );
+}
+
+/** 회수 예상의 핵심인 월 개선액이 어떻게 산정됐는지만 설명한다. */
+function PaybackFormulaInfo({ formula }) {
+  const [open, setOpen] = useState(false);
+  if (!formula) return null;
+
+  return (
+    <span className="cx-payback-info">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`회수 예상 계산 방법 ${open ? "접기" : "보기"}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Info size={15} strokeWidth={2.2} aria-hidden="true" />
+      </button>
+      {open && (
+        <span className="cx-payback-pop" role="note">
+          <strong>후보 매장 영업이익<em>추정</em> − 현재 영업이익 = 월 {money(formula.monthlyGain)}만원</strong>
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -525,7 +669,7 @@ function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, ai
               {candidate.additional_fund_needed > 0 ? `추가로 ${money(candidate.additional_fund_needed)}만원이 필요해요` : "추가 자금이 필요하지 않아요"}
             </span>
           </div>
-          <p className="cx-data-source">출처: 사용자 입력값, Stay or Move Rule Engine, 서울시 상권분석서비스 기반 ML 예측</p>
+          <p className="cx-data-source">출처: 서울 열린데이터 광장</p>
         </div>
         <MarginCard data={data} candidate={candidate} fallbackBuffer={buffer} />
       </section>
@@ -537,15 +681,17 @@ function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, ai
           <div><h2 id="decision-drivers">이 세 가지를 먼저 보세요</h2></div>
           <span className="cx-help">현재 조건 기준</span>
         </div>
-        <ol className="cx-driver-list">
-          {drivers.map((driver, index) => (
+        <ul className="cx-driver-list">
+          {drivers.map((driver) => (
             <li key={driver.label}>
-              <span className={`cx-driver-rank ${index === 0 ? "is-first" : ""}`}>{["1st", "2nd", "3rd"][index]}</span>
-              <div><p>{driver.label}</p><strong>{driver.value}</strong><span>{driver.detail}</span></div>
+              <div>
+                <p>{driver.label}{driver.formula && <PaybackFormulaInfo formula={driver.formula} />}</p>
+                <strong>{driver.value}</strong>
+                <span>{driver.detail}</span>
+              </div>
             </li>
           ))}
-        </ol>
-        <p className="cx-data-source">출처: 사용자 입력값, Stay or Move Rule Engine 계산값</p>
+        </ul>
       </section>
 
       <section className="cx-section-card">
@@ -554,7 +700,7 @@ function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, ai
           <span className="cx-help">오른쪽이 유리한 쪽</span>
         </div>
         <CandidateDeltaCompare data={data} rows={rows} recommendedId={data?.ranking?.recommended_candidate} />
-        <p className="cx-data-source">출처: 사용자 입력값, Stay or Move Rule Engine, 서울시 상권분석서비스 기반 ML 예측</p>
+        <p className="cx-data-source">출처: 서울 열린데이터 광장</p>
       </section>
     </div>
   );
@@ -572,7 +718,7 @@ function RecoveryTooltip({ active, payload, label }) {
 
 function RecoveryDot({ cx, cy, payload, selectedMonth }) {
   if (payload?.month !== selectedMonth) return null;
-  return <Dot cx={cx} cy={cy} r={6} fill="#377538" stroke="#ffffff" strokeWidth={2} />;
+  return <Dot cx={cx} cy={cy} r={6} fill={CHART.green} stroke="#ffffff" strokeWidth={2.2} />;
 }
 
 function RecoveryPointLabel({ x, y, index, selectedIndex, months, sales }) {
@@ -580,7 +726,7 @@ function RecoveryPointLabel({ x, y, index, selectedIndex, months, sales }) {
   return (
     <g transform={`translate(${x - 76} ${y - 68})`}>
       <rect width="152" height="52" rx="8" fill="#121619" />
-      <text x="13" y="21" fill="#cdd1ce" fontSize="11" fontWeight="650">온보딩 입력 {months}개월</text>
+      <text x="13" y="21" fill={CHART.onDarkWeak} fontSize="12" fontWeight="650">온보딩 입력 {months}개월</text>
       <text x="13" y="40" fill="#ffffff" fontSize="15" fontWeight="800">월 {money(Math.round(sales))}만원</text>
     </g>
   );
@@ -591,7 +737,7 @@ function RecoveryMonthTick({ x, y, payload, selectedMonth }) {
   return (
     <g transform={`translate(${x} ${y})`}>
       {selected && <rect x="-25" y="6" width="50" height="24" rx="7" fill="#121619" />}
-      <text x="0" y="22" textAnchor="middle" fill={selected ? "#ffffff" : "#64696e"} fontSize="11" fontWeight={selected ? 800 : 650}>{payload?.value}개월</text>
+      <text x="0" y="22" textAnchor="middle" fill={selected ? "#ffffff" : CHART.label} fontSize="12" fontWeight={selected ? 800 : 650}>{payload?.value}개월</text>
     </g>
   );
 }
@@ -632,23 +778,23 @@ function RecoveryCurve({ data, candidate, pickedMonths }) {
           <ComposedChart data={chartData} margin={{ top: 72, right: 14, bottom: 16, left: 12 }}>
             <defs>
               <linearGradient id="resultRecoveryFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#4bd667" stopOpacity="0.28" />
-                <stop offset="100%" stopColor="#4bd667" stopOpacity="0.03" />
+                <stop offset="0%" stopColor={CHART.brand} stopOpacity="0.28" />
+                <stop offset="100%" stopColor={CHART.brand} stopOpacity="0.03" />
               </linearGradient>
             </defs>
-            <CartesianGrid stroke="#dfe2e1" strokeDasharray="4 4" />
-            <ReferenceArea x1={months - 2} x2={months + 2} fill="#4bd667" fillOpacity={0.1} stroke="none" />
-            <XAxis type="number" dataKey="month" domain={[M0, M1]} ticks={ticks} interval={0} tick={<RecoveryMonthTick selectedMonth={months} />} axisLine={{ stroke: "#8c9290" }} tickLine={false} height={54}>
-              <Label value="회수 목표기간" position="insideBottom" offset={0} fill="#444a47" fontSize={12} fontWeight={750} />
+            <CartesianGrid stroke={CHART.grid} strokeDasharray="4 4" />
+            <ReferenceArea x1={months - 2} x2={months + 2} fill={CHART.brand} fillOpacity={0.1} stroke="none" />
+            <XAxis type="number" dataKey="month" domain={[M0, M1]} ticks={ticks} interval={0} tick={<RecoveryMonthTick selectedMonth={months} />} axisLine={{ stroke: CHART.axis }} tickLine={false} height={54}>
+              <Label value="회수 목표기간" position="insideBottom" offset={0} fill={CHART.label} fontSize={12} fontWeight={750} />
             </XAxis>
-            <YAxis type="number" domain={yDomain} orientation="right" tickFormatter={(tick) => `${money(Math.round(tick))}만`} tick={{ fill: "#686d72", fontSize: 11, fontWeight: 650 }} axisLine={false} tickLine={false} width={72} />
-            <Tooltip content={<RecoveryTooltip />} cursor={{ stroke: "#377538", strokeWidth: 1.5, strokeDasharray: "4 4" }} />
+            <YAxis type="number" domain={yDomain} orientation="right" tickFormatter={(tick) => `${money(Math.round(tick))}만`} tick={{ fill: CHART.label, fontSize: 12, fontWeight: 650 }} axisLine={false} tickLine={false} width={72} />
+            <Tooltip content={<RecoveryTooltip />} cursor={{ stroke: CHART.green, strokeWidth: 1.5, strokeDasharray: "4 4" }} />
             <Area type="monotone" dataKey="sales" name="필요 월매출" stroke="none" fill="url(#resultRecoveryFill)" isAnimationActive={false} />
-            <Line type="monotone" dataKey="sales" name="필요 월매출" stroke="#377538" strokeWidth={4} dot={(props) => <RecoveryDot {...props} selectedMonth={months} />} activeDot={{ r: 6, fill: "#377538", stroke: "#ffffff", strokeWidth: 2 }} isAnimationActive={false}>
+            <Line type="monotone" dataKey="sales" name="필요 월매출" stroke={CHART.green} strokeWidth={4} dot={(props) => <RecoveryDot {...props} selectedMonth={months} />} activeDot={{ r: 6, fill: CHART.green, stroke: "#ffffff", strokeWidth: 2 }} isAnimationActive={false}>
               <LabelList content={(props) => <RecoveryPointLabel {...props} selectedIndex={months - M0} months={months} sales={value} />} />
             </Line>
-            <ReferenceLine segment={[{ x: M0, y: value }, { x: months, y: value }]} stroke="#377538" strokeWidth={2} strokeDasharray="5 5" />
-            <ReferenceLine segment={[{ x: months, y: yDomain[0] }, { x: months, y: value }]} stroke="#377538" strokeWidth={2} />
+            <ReferenceLine segment={[{ x: M0, y: value }, { x: months, y: value }]} stroke={CHART.green} strokeWidth={2.2} strokeDasharray="5 5" />
+            <ReferenceLine segment={[{ x: months, y: yDomain[0] }, { x: months, y: value }]} stroke={CHART.green} strokeWidth={2.2} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -730,13 +876,13 @@ function RequirementBreakdown({ data, candidate, current, required, lift }) {
       <div className="cx-rechart cx-breakdown-rechart" role="img" aria-label={rows.map((row) => `${row.label} 총매출 ${money(Math.round(row.total))}만원`).join(", ")}>
         <ResponsiveContainer width="100%" height={190}>
           <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 86, bottom: 8, left: 4 }} barCategoryGap={22}>
-            <CartesianGrid horizontal={false} stroke="#e7e8ea" strokeDasharray="4 4" />
+            <CartesianGrid horizontal={false} stroke={CHART.grid} strokeDasharray="4 4" />
             <XAxis type="number" domain={[0, axis * 1.04]} hide />
-            <YAxis type="category" dataKey="label" width={126} axisLine={false} tickLine={false} tick={{ fill: "#252b28", fontSize: 12, fontWeight: 750 }} />
-            <Tooltip content={<BreakdownTooltip />} cursor={{ fill: "rgba(75,214,103,.05)" }} />
-            <Bar dataKey="variable" name="팔면서 나가는 돈" stackId="total" fill="#dfe4e0" radius={[8, 0, 0, 8]} isAnimationActive={false} />
-            <Bar dataKey="fixed" name="매장 유지비" stackId="total" fill="#9fa7a2" isAnimationActive={false} />
-            <Bar dataKey="keep" name="손에 남는 돈" stackId="total" fill="#377538" radius={[0, 8, 8, 0]} isAnimationActive={false}>
+            <YAxis type="category" dataKey="label" width={126} axisLine={false} tickLine={false} tick={{ fill: CHART.ink, fontSize: 12, fontWeight: 750 }} />
+            <Tooltip content={<BreakdownTooltip />} cursor={{ fill: "rgba(2,197,81,.05)" }} />
+            <Bar dataKey="variable" name="팔면서 나가는 돈" stackId="total" fill={CHART.step1} radius={[8, 0, 0, 8]} isAnimationActive={false} />
+            <Bar dataKey="fixed" name="매장 유지비" stackId="total" fill={CHART.step2} isAnimationActive={false} />
+            <Bar dataKey="keep" name="손에 남는 돈" stackId="total" fill={CHART.green} radius={[0, 8, 8, 0]} isAnimationActive={false}>
               <LabelList dataKey="total" position="right" formatter={(value) => `${money(Math.round(value))}만원`} fill="#121619" fontSize={13} fontWeight={800} />
             </Bar>
           </BarChart>
@@ -783,7 +929,6 @@ function SalesPanel({ data, candidate, rows, recommendedId, places }) {
           <span className="cx-help">후보 {candidate.site_id} 기준</span>
         </div>
         <RequirementBreakdown data={data} candidate={candidate} current={current} required={required} lift={lift} />
-        <p className="cx-data-source">출처: 사용자 입력값, Stay or Move Rule Engine 계산값</p>
       </section>
 
       <section className="cx-section-card">
@@ -800,14 +945,13 @@ function SalesPanel({ data, candidate, rows, recommendedId, places }) {
           </p>
         )}
         <PredictedSales candidates={rows} recommendedId={recommendedId} places={places} />
-        <p className="cx-data-source">출처: 서울시 상권분석서비스 기반 ML 예측</p>
+        <p className="cx-data-source">출처: 서울 열린데이터 광장</p>
       </section>
 
       {targetPeriod && (
         <section className="cx-section-card">
           <div className="cx-section-head"><div><h2>기간을 늘릴수록 매달 필요한 매출은 줄어요</h2></div></div>
           <RecoveryCurve key={candidate.site_id} data={data} candidate={candidate} pickedMonths={targetMonths} />
-          <p className="cx-data-source">출처: 사용자가 선택한 회수기간, Stay or Move Rule Engine 계산값</p>
         </section>
       )}
     </div>
@@ -865,7 +1009,15 @@ function MoneyPanel({ data, candidate, rows }) {
           <div className="cx-money-figure"><span>이전 소요자금</span><strong>{money(candidate.initial_capital)}<em>만원</em></strong><p>보증금 차액과 실제로 쓰는 이전비를 합친 금액이에요.</p></div>
           <div className="cx-fund-chart">
             <div><span>가용현금</span><strong>{money(candidate.available_self_fund)}만원</strong></div>
-            <span className="cx-track"><span className="cx-fill good" style={{ width: `${coverage}%` }} /></span>
+            <MiniStack
+              total={100}
+              height={12}
+              label={`이전 소요자금의 ${Math.round(coverage)}%를 가용현금으로 채워요`}
+              segments={[
+                { key: "have", value: coverage, color: CHART.green },
+                { key: "short", value: 100 - coverage, color: CHART.step1 },
+              ]}
+            />
             <div><span>추가 필요</span><strong className={candidate.additional_fund_needed > 0 ? "cx-risk-text" : ""}>{money(candidate.additional_fund_needed)}만원</strong></div>
           </div>
         </div>
@@ -884,7 +1036,6 @@ function MoneyPanel({ data, candidate, rows }) {
             <dd>{candidate.monthly_cost_delta > 0 ? `${money(candidate.monthly_cost_delta)}만원 더 들어요` : `${money(Math.abs(candidate.monthly_cost_delta))}만원 줄어요`}</dd>
           </div>
         </dl>
-        <p className="cx-data-source">출처: 사용자 입력값, Stay or Move Rule Engine 계산값</p>
       </section>
 
       <PolicySection candidate={candidate} />
@@ -892,10 +1043,29 @@ function MoneyPanel({ data, candidate, rows }) {
   );
 }
 
-function unitInterval(value) {
-  if (!hasValue(value)) return null;
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 && number <= 1 ? number : null;
+/** 상권변화지표를 안정 → 불안정 순으로 세운 축.
+ *  HH(정체)  기존 점포가 오래 버티고 교체가 적다 — 가장 예측 가능
+ *  LH(확장)  새로 들어오는 점포가 많아 평균 운영기간이 짧다
+ *  HL(축소)  들어온 점포가 빨리 접는다
+ *  LL(변동 큼) 진입도 퇴출도 가장 빠르다 — 변동이 가장 크다
+ *  순서를 바꾸려면 이 배열만 고치면 축과 점 위치가 함께 따라온다. */
+const CHANGE_SCALE = ["HH", "LH", "HL", "LL"];
+
+/** 축 위치만으로는 왜 그 자리인지 알 수 없어, 분류별로 한 문장씩 붙인다. */
+const CHANGE_MEANING = {
+  HH: "점포가 오래 유지되고 교체가 적어요.",
+  LH: "새로 들어오는 점포가 늘고 있어요.",
+  HL: "들어온 점포가 오래 버티지 못해요.",
+  LL: "새로 열고 닫는 속도가 가장 빨라요.",
+};
+
+/** 원본 분류명 '다이나믹'은 활발한 상권처럼 오해될 수 있어, 화면에서는 뜻을 바로 쓴다. */
+const changeLabel = (code, name) => String(code ?? "").trim().toUpperCase() === "LL" ? "변동 큼" : name;
+
+/** 지표 코드가 축의 몇 번째 눈금인지. 아는 코드가 아니면 null(표시 안 함). */
+function changePosition(code) {
+  const index = CHANGE_SCALE.indexOf(String(code ?? "").trim().toUpperCase());
+  return index === -1 ? null : index;
 }
 
 // 같은 예상매출이라도 근거가 다르다. 상권 스냅샷이 있는 값과 자치구 평균으로
@@ -938,30 +1108,36 @@ function PredictedSalesChart({ candidates = [], recommendedId }) {
     <div className="cx-rechart cx-predict-rechart" role="img" aria-label="후보별 예상매출과 최소 필요매출 비교">
       <ResponsiveContainer width="100%" height={data.length * 74 + 46}>
         <BarChart data={data} layout="vertical" margin={{ top: 16, right: 86, bottom: 6, left: 4 }} barGap={5}>
-          <CartesianGrid horizontal={false} stroke="#e7e8ea" strokeDasharray="4 4" />
+          <CartesianGrid horizontal={false} stroke={CHART.grid} strokeDasharray="4 4" />
           <XAxis type="number" hide />
           <YAxis
             type="category"
             dataKey="label"
-            tick={{ fill: "#767b81", fontSize: 11, fontWeight: 700 }}
+            tick={{ fill: CHART.weak, fontSize: 12, fontWeight: 700 }}
             axisLine={false}
             tickLine={false}
             width={50}
           />
           <Tooltip content={<PredictedSalesTooltip />} cursor={{ fill: "rgba(18,22,25,.035)" }} />
-          <Bar dataKey="required" name="최소 필요매출" fill="#c3c8c5" barSize={11} radius={[0, 4, 4, 0]} isAnimationActive={false}>
-            <LabelList dataKey="required" position="right" offset={7} fill="#767b81" fontSize={10} fontWeight={700} formatter={(v) => (v == null ? "" : `${money(v)}`)} />
+          <Bar dataKey="required" name="최소 필요매출" fill={CHART.baselineBar} barSize={11} radius={[0, 4, 4, 0]} isAnimationActive={false}>
+            <LabelList dataKey="required" position="right" offset={7} fill={CHART.weak} fontSize={12} fontWeight={700} formatter={(v) => (v == null ? "" : `${money(v)}`)} />
           </Bar>
           <Bar dataKey="predicted" name="예상매출" barSize={16} radius={[0, 4, 4, 0]} isAnimationActive={false}>
             {data.map((row) => (
-              <Cell key={row.label} fill={row.required != null && row.predicted < row.required ? "#c44e46" : "#377538"} />
+              <Cell
+                key={row.label}
+                fill={row.required != null && row.predicted < row.required
+                  ? CHART.risk
+                  : row.recommended ? CHART.brand : CHART.brandSoft}
+              />
             ))}
-            <LabelList dataKey="predicted" position="right" offset={7} fill="#121619" fontSize={11} fontWeight={750} formatter={(v) => `${money(v)}만원`} />
+            <LabelList dataKey="predicted" position="right" offset={7} fill="#121619" fontSize={12} fontWeight={750} formatter={(v) => `${money(v)}만원`} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
       <p className="cx-predict-legend">
-        <span><i className="is-predicted" />예상매출</span>
+        <span><i className="is-recommended" />추천 후보 예상매출</span>
+        <span><i className="is-predicted" />그 밖의 후보 예상매출</span>
         <span><i className="is-required" />최소 필요매출</span>
       </p>
     </div>
@@ -1003,7 +1179,7 @@ function PredictedSales({ candidates = [], recommendedId, places }) {
                 </div>
                 {ml.prediction_outlier && (
                   <p className="cx-predict-outlier">
-                    <CircleAlert size={14} aria-hidden="true" />
+                    <CircleAlert size={15} aria-hidden="true" />
                     실측 분포에서 매우 극단적인 값이에요. 보정하지 않고 원값 그대로 보여드려요.
                   </p>
                 )}
@@ -1036,20 +1212,24 @@ function MarketComparison({ candidates = [], recommendedId, places }) {
         <span>후보 지역</span>
         <span>같은 업종 점포</span>
         <span>프랜차이즈 비율</span>
-        <span>상권 불안정도</span>
+        <span>상권 안정도</span>
       </div>
       <div className="cx-market-compare-rows">
         {candidates.map((row) => {
           const observed = row.market_observed || {};
+          const changeLabelText = changeLabel(observed.change_index, observed.change_name);
           const stores = hasValue(observed.store_count) ? Number(observed.store_count) : NaN;
           const storeWidth = Number.isFinite(stores) ? Math.max(3, stores / storeMax * 100) : 0;
           const franchiseShare = hasValue(observed.franchise_share) ? Number(observed.franchise_share) : NaN;
           const share = Number.isFinite(franchiseShare) ? Math.max(0, Math.min(100, franchiseShare)) : null;
-          const risk = unitInterval(observed.change_index);
+          const stability = changePosition(observed.change_index);
           const isRecommended = row.site_id === recommendedId;
           const areaName = places?.[row.site_id]?.trdar_nm;
-          const storePeriod = observed.snapshot_period?.stores;
-          const changePeriod = observed.snapshot_period?.change;
+          // 원본은 YYYYQ 코드(예: 20244)라 그대로 쓰면 사용자가 읽을 수 없다
+          const storePeriod = hasValue(observed.snapshot_period?.stores)
+            ? quarterMonths(observed.snapshot_period.stores) : null;
+          const changePeriod = hasValue(observed.snapshot_period?.change)
+            ? quarterMonths(observed.snapshot_period.change) : null;
 
           return (
             <article className={`cx-market-compare-row${isRecommended ? " is-recommended" : ""}`} key={row.site_id}>
@@ -1065,7 +1245,13 @@ function MarketComparison({ candidates = [], recommendedId, places }) {
               >
                 <span className="cx-market-mobile-label">같은 업종 점포</span>
                 <strong>{Number.isFinite(stores) ? `${money(stores)}곳` : "확인 불가"}</strong>
-                <div className="cx-store-track" aria-hidden="true"><i style={{ width: `${storeWidth}%` }} /></div>
+                <MiniBar
+                  value={Number.isFinite(stores) ? stores : 0}
+                  max={storeMax}
+                  color={candidateColor(isRecommended)}
+                  height={10}
+                  label={`${row.name} 같은 업종 점포 막대`}
+                />
                 <span className="cx-metric-tooltip" role="tooltip">
                   {areaName || row.name}에서 관측한 값이에요.
                   {storePeriod ? ` 점포 기준은 ${storePeriod}예요.` : ""}
@@ -1079,9 +1265,13 @@ function MarketComparison({ candidates = [], recommendedId, places }) {
               >
                 <span className="cx-market-mobile-label">프랜차이즈 비율</span>
                 <strong>{share === null ? "확인 불가" : `${share.toFixed(1)}%`}</strong>
-                <div className="cx-share-track" aria-hidden="true">
-                  <i style={{ width: `${share ?? 0}%` }} />
-                </div>
+                <MiniBar
+                  value={share ?? 0}
+                  max={100}
+                  color={candidateColor(isRecommended)}
+                  height={10}
+                  label={`${row.name} 프랜차이즈 비율 막대`}
+                />
                 <span className="cx-metric-tooltip" role="tooltip">
                   {hasValue(observed.franchise_count) && Number.isFinite(stores)
                     ? `전체 ${money(stores)}곳 중 프랜차이즈는 ${money(observed.franchise_count)}곳이에요.`
@@ -1090,20 +1280,22 @@ function MarketComparison({ candidates = [], recommendedId, places }) {
               </div>
 
               <div
-                className={`cx-market-metric cx-risk-metric${risk === null ? " is-unavailable" : ""}`}
+                className={`cx-market-metric cx-risk-metric${stability === null ? " is-unavailable" : ""}`}
                 tabIndex="0"
-                aria-label={`${row.name} 상권 불안정도 ${risk === null ? "확인 불가" : `${risk.toFixed(2)}, 0에 가까울수록 안정적이고 1에 가까울수록 주의가 필요해요`}`}
+                aria-label={`${row.name} 상권 안정도 ${stability === null ? "확인 불가" : `${changeLabelText}, 네 단계 중 ${stability + 1}번째로 안정적`}`}
               >
-                <span className="cx-market-mobile-label">상권 불안정도</span>
-                <strong>{risk === null ? "확인 불가" : risk.toFixed(2)}</strong>
-                <div className="cx-risk-track" aria-hidden="true">
-                  {risk !== null && <i style={{ left: `${risk * 100}%` }} />}
-                </div>
-                <div className="cx-risk-axis" aria-hidden="true"><span>0 안정적</span><span>1 주의 필요</span></div>
+                <span className="cx-market-mobile-label">상권 안정도</span>
+                <strong>{stability === null ? "확인 불가" : changeLabelText}</strong>
+                <StabilityScale
+                  position={stability}
+                  color={isRecommended ? CHART.brand : CHART.ink}
+                  label={`${row.name} 상권 안정도 위치`}
+                />
+                <div className="cx-risk-axis" aria-hidden="true"><span>안정</span><span>불안정</span></div>
                 <span className="cx-metric-tooltip" role="tooltip">
-                  {risk === null
-                    ? "0에서 1 사이 숫자형 지표가 연결되면 위치를 보여드려요."
-                    : `0에 가까울수록 안정적이에요.${changePeriod ? ` 변화 기준은 ${changePeriod}예요.` : ""}`}
+                  {stability === null
+                    ? "서울시 상권변화지표가 연결되면 위치를 보여드려요."
+                    : `${CHANGE_MEANING[CHANGE_SCALE[stability]]}${changePeriod ? ` 변화 기준은 ${changePeriod}예요.` : ""}`}
                 </span>
               </div>
             </article>
@@ -1134,7 +1326,7 @@ function FootfallQuarterTick({ x, y, payload }) {
   const start = (quarter - 1) * 3 + 1;
   return (
     <g transform={`translate(${x} ${y})`}>
-      <text textAnchor="middle" fill="#767b81" fontSize="10" fontWeight="650">
+      <text textAnchor="middle" fill={CHART.weak} fontSize="12" fontWeight="650">
         <tspan x="0" dy="15">{year}년</tspan>
         <tspan x="0" dy="13">{start}~{start + 2}월</tspan>
       </text>
@@ -1147,8 +1339,8 @@ function FootfallBarLabel({ x, y, width, height, value }) {
   const barTop = Math.min(y, y + height);
   const barBottom = Math.max(y, y + height);
   const labelY = numeric < 0 ? barBottom + 15 : barTop - 7;
-  const fill = numeric > 0 ? "#377538" : numeric < 0 ? "#c44e46" : "#686d72";
-  return <text x={x + width / 2} y={labelY} textAnchor="middle" fill={fill} fontSize="10" fontWeight="750">{Math.abs(numeric) < .005 ? "기준" : signed(numeric)}</text>;
+  const fill = numeric > 0 ? CHART.green : numeric < 0 ? CHART.risk : CHART.label;
+  return <text x={x + width / 2} y={labelY} textAnchor="middle" fill={fill} fontSize="12" fontWeight="750">{Math.abs(numeric) < .005 ? "기준" : signed(numeric)}</text>;
 }
 
 function FootfallTrendChart({ candidates = [], recommendedId }) {
@@ -1231,15 +1423,16 @@ function FootfallTrendChart({ candidates = [], recommendedId }) {
               <div className="cx-rechart cx-footfall-rechart" role="img" aria-label={`${item.district} 분기별 유동인구의 이전 3개월 대비 변화율`}>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={item.points.map((point, index) => ({ ...point, qoq: index === 0 ? 0 : point.qoq }))} margin={{ top: 28, right: 12, bottom: 14, left: 0 }}>
-                    <CartesianGrid vertical={false} stroke="#e7e8ea" strokeDasharray="4 4" />
-                    <XAxis dataKey="quarter" tick={<FootfallQuarterTick />} axisLine={{ stroke: "#a6aba9" }} tickLine={false} interval={0} height={46} />
-                    <YAxis domain={[-scaleCeiling, scaleCeiling]} ticks={[-scaleCeiling, 0, scaleCeiling]} tickFormatter={(tick) => `${tick > 0 ? "+" : ""}${tick.toFixed(2)}%`} tick={{ fill: "#767b81", fontSize: 10 }} axisLine={false} tickLine={false} width={58} />
+                    <CartesianGrid vertical={false} stroke={CHART.grid} strokeDasharray="4 4" />
+                    <XAxis dataKey="quarter" tick={<FootfallQuarterTick />} axisLine={false} tickLine={false} interval={0} height={46} />
+                    <YAxis domain={[-scaleCeiling, scaleCeiling]} ticks={[-scaleCeiling, 0, scaleCeiling]} tickFormatter={(tick) => `${tick > 0 ? "+" : ""}${tick.toFixed(2)}%`} tick={{ fill: CHART.weak, fontSize: 10 }} axisLine={false} tickLine={false} width={58} />
                     <Tooltip content={<FootfallTooltip />} cursor={{ fill: "rgba(18,22,25,.035)" }} />
-                    <ReferenceLine y={0} stroke="#686d72" strokeWidth={1.5} />
+                    <ReferenceLine y={0} stroke={CHART.label} strokeWidth={2.2} />
                     <Bar dataKey="qoq" name="이전 3개월 대비" maxBarSize={34} radius={[5, 5, 5, 5]} isAnimationActive={false}>
                       {item.points.map((point, index) => {
                         const change = index === 0 ? 0 : point.qoq;
-                        return <Cell key={point.quarter} fill={change > 0 ? "#377538" : change < 0 ? "#c44e46" : "#9fa4ab"} />;
+                        const up = item.recommended ? CHART.brand : CHART.brandSoft;
+                        return <Cell key={point.quarter} fill={change > 0 ? up : change < 0 ? CHART.risk : CHART.neutral} />;
                       })}
                       <LabelList dataKey="qoq" content={<FootfallBarLabel />} />
                     </Bar>
@@ -1250,7 +1443,7 @@ function FootfallTrendChart({ candidates = [], recommendedId }) {
           );
         })}
       </div>
-      <p className="cx-data-source">출처: 서울시 상권분석서비스 유동인구, 자치구 단위 합산</p>
+      <p className="cx-data-source">출처: 서울 열린데이터 광장 유동인구, 자치구 단위 합산</p>
     </div>
   );
 }
@@ -1416,7 +1609,7 @@ function PolicySection({ candidate }) {
         <p><Scale {...POLICY_ICON} />정책지원 후보가 검색되어도 지원금을 확보한 것으로 계산하지 않아요. 실제 지원 여부는 해당 기관 심사로 정해져요.</p>
         <p>지원한도와 금리는 공고상 조건이며 실제 승인액과 다를 수 있어요.</p>
       </div>
-      <p className="cx-data-source">출처: 기업마당과 각 기관 공식 공고, RAG 검색 결과</p>
+      <p className="cx-data-source">출처: 기업마당과 각 기관 공식 공고</p>
     </section>
   );
 }
@@ -1431,7 +1624,7 @@ function MarketPanel({ candidate, rows, recommendedId, places }) {
         <div className="cx-market-group">
           <h3 id="market-compare-title">후보 지역의 상권 상태를 나란히 봐요</h3>
           <MarketComparison candidates={rows} recommendedId={recommendedId} places={places} />
-          <p className="cx-data-source">출처: 서울시 상권분석서비스 점포와 상권변화지표</p>
+          <p className="cx-data-source">출처: 서울 열린데이터 광장 점포와 상권변화지표</p>
         </div>
 
         <div className="cx-market-group is-context">
@@ -1444,8 +1637,8 @@ function MarketPanel({ candidate, rows, recommendedId, places }) {
 }
 
 const TREND_DASH = { A: undefined, B: "10 6", C: "3 6" };
-const TREND_NEUTRAL = "#69716d";
-const TREND_RECOMMENDED = "#377538";
+const TREND_NEUTRAL = CHART.neutral;
+const TREND_RECOMMENDED = CHART.brand;
 
 function MarketTrendTooltip({ active, payload, label, series, recommendedId }) {
   if (!active || !payload?.length) return null;
@@ -1555,19 +1748,19 @@ function MarketTrendChart({ candidates = [], recommendedId }) {
       <div className="cx-rechart cx-market-trend-rechart" role="img" aria-label="후보 지역별 분기 매출 실측과 집계 전 추정 흐름">
         <ResponsiveContainer width="100%" height={340}>
           <ComposedChart data={chartData} margin={{ top: 32, right: 18, bottom: 12, left: 4 }}>
-            <CartesianGrid stroke="#e1e5e2" strokeDasharray="4 4" vertical={false} />
+            <CartesianGrid stroke={CHART.grid} strokeDasharray="4 4" vertical={false} />
             {forecastQuarters.length > 0 && (
               <ReferenceArea
                 x1={lastObservedQuarter}
                 x2={quarters[quarters.length - 1]}
-                fill="#9fa4ab"
+                fill={CHART.neutral}
                 fillOpacity={0.09}
-                label={{ value: "집계 전 추정", position: "insideTopRight", fill: "#686d72", fontSize: 11, fontWeight: 700 }}
+                label={{ value: "집계 전 추정", position: "insideTopRight", fill: CHART.label, fontSize: 12, fontWeight: 700 }}
               />
             )}
-            <XAxis dataKey="quarter" tickFormatter={(quarter) => quarterMonths(quarter, true)} tick={{ fill: "#686d72", fontSize: 11, fontWeight: 650 }} axisLine={{ stroke: "#a6aba9" }} tickLine={false} interval="preserveStartEnd" />
-            <YAxis type="number" domain={[axisMin, axisMax]} tickFormatter={(value) => scaledWon(value)} tick={{ fill: "#686d72", fontSize: 11 }} axisLine={false} tickLine={false} width={70} />
-            <Tooltip content={<MarketTrendTooltip series={series} recommendedId={recommendedId} />} cursor={{ stroke: "#44474b", strokeWidth: 1.2, strokeDasharray: "4 4" }} />
+            <XAxis dataKey="quarter" tickFormatter={(quarter) => quarterMonths(quarter, true)} tick={{ fill: CHART.label, fontSize: 12, fontWeight: 650 }} axisLine={{ stroke: CHART.axis }} tickLine={false} interval="preserveStartEnd" />
+            <YAxis type="number" domain={[axisMin, axisMax]} tickFormatter={(value) => scaledWon(value)} tick={{ fill: CHART.label, fontSize: 11 }} axisLine={false} tickLine={false} width={70} />
+            <Tooltip content={<MarketTrendTooltip series={series} recommendedId={recommendedId} />} cursor={{ stroke: CHART.label, strokeWidth: 1.2, strokeDasharray: "4 4" }} />
             {renderSeries.map((item) => {
               const color = item.id === recommendedId ? TREND_RECOMMENDED : TREND_NEUTRAL;
               return (
@@ -1608,7 +1801,7 @@ function MarketTrendChart({ candidates = [], recommendedId }) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <p className="cx-data-source">출처: 서울시 상권분석서비스 추정매출, 자치구 단위 집계</p>
+      <p className="cx-data-source">출처: 서울 열린데이터 광장 추정매출, 자치구 단위 집계</p>
     </div>
   );
 }
