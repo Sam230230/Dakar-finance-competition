@@ -17,6 +17,7 @@ import {
   Percent,
   RotateCcw,
   Scale,
+  TrendingUp,
   Wallet,
   X,
 } from "lucide-react";
@@ -71,54 +72,44 @@ const CHART = {
 const candidateColor = (isRecommended) => (isRecommended ? CHART.brand : CHART.neutral);
 
 /**
- * 값 하나를 길이로 보여주는 한 칸 막대. 예전에는 CSS 로 그렸는데
- * 결과지 안의 그림을 recharts 한 종류로 모으려고 차트로 바꿨다.
+ * 좁은 칸에 들어가는 작은 그림 세 종류.
+ *
+ * 한때 recharts 로 그렸는데 되돌렸다. ResponsiveContainer 는 부모 폭을 재서 자기 폭을 정하는데,
+ * 그리드 칸이 줄어들 때 다시 재지 않는다. 좁은 레이아웃(1열)에서 넓은 레이아웃(4열)으로 가면
+ * 좁을 때의 폭(588px)을 그대로 들고 있어 페이지에 가로 스크롤이 최대 322px 생겼다.
+ * 리렌더가 일어나야 회복돼서, 창 크기를 바꾼 사용자에게는 깨진 채로 남았다.
+ *
+ * 셋 다 값을 길이나 위치로 옮기는 게 전부라 차트 엔진이 할 일이 없다. CSS 로 그리면
+ * 폭 계산을 브라우저가 하므로 이 문제가 사라진다.
  */
+
+/** 값 하나를 길이로 보여주는 한 칸 막대. */
 function MiniBar({ value, max, color, height = 14, label }) {
   const safe = Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+  const limit = Number(max) > 0 ? Number(max) : 1;
+  const pct = Math.min(100, (safe / limit) * 100);
   return (
-    <div className="cx-mini-chart" role="img" aria-label={label}>
-      <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={[{ name: "v", value: safe }]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-          <XAxis type="number" domain={[0, max]} hide />
-          <YAxis type="category" dataKey="name" hide />
-          <Bar
-            dataKey="value"
-            fill={color}
-            barSize={height - 6}
-            radius={[999, 999, 999, 999]}
-            background={{ fill: CHART.grid, radius: 999 }}
-            isAnimationActive={false}
-          />
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="cx-mini-chart cx-mini-bar" role="img" aria-label={label} style={{ height }}>
+      <span className="cx-mini-bar-track" style={{ height: Math.max(4, height - 6) }}>
+        <span className="cx-mini-bar-fill" style={{ width: `${pct}%`, background: color }} />
+      </span>
     </div>
   );
 }
 
 /** 여러 조각을 이어 붙인 한 줄 막대. 합계에서 각 조각이 차지하는 몫을 본다. */
-function MiniStack({ segments, total, height = 16, label }) {
-  const row = segments.reduce((acc, seg) => ({ ...acc, [seg.key]: Math.max(0, Number(seg.value) || 0) }), { name: "v" });
-  const last = segments.length - 1;
+function MiniStack({ segments = [], total, height = 16, label }) {
+  const sum = Number(total) > 0
+    ? Number(total)
+    : segments.reduce((acc, seg) => acc + Math.max(0, Number(seg.value) || 0), 0) || 1;
   return (
-    <div className="cx-mini-chart" role="img" aria-label={label}>
-      <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={[row]} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-          <XAxis type="number" domain={[0, total]} hide />
-          <YAxis type="category" dataKey="name" hide />
-          {segments.map((seg, index) => (
-            <Bar
-              key={seg.key}
-              dataKey={seg.key}
-              stackId="one"
-              fill={seg.color}
-              barSize={height}
-              radius={index === 0 ? [5, 0, 0, 5] : index === last ? [0, 5, 5, 0] : 0}
-              isAnimationActive={false}
-            />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="cx-mini-chart cx-mini-stack" role="img" aria-label={label} style={{ height }}>
+      {segments.map((seg) => (
+        <span
+          key={seg.key}
+          style={{ width: `${(Math.max(0, Number(seg.value) || 0) / sum) * 100}%`, background: seg.color }}
+        />
+      ))}
     </div>
   );
 }
@@ -127,21 +118,17 @@ function MiniStack({ segments, total, height = 16, label }) {
  *  그래서 눈금 네 칸짜리 가로 막대에 점 하나만 찍는다 — 왼쪽일수록 점포 교체가
  *  느려 예측 가능하고(안정), 오른쪽일수록 진입·퇴출이 빨라 변동이 크다(불안정). */
 function StabilityScale({ position, color, label }) {
+  const last = CHANGE_SCALE.length - 1;
   return (
-    <div className="cx-mini-chart" role="img" aria-label={label}>
-      <ResponsiveContainer width="100%" height={16}>
-        <ScatterChart margin={{ top: 5, right: 7, bottom: 5, left: 7 }}>
-          <XAxis type="number" dataKey="x" domain={[0, CHANGE_SCALE.length - 1]} hide />
-          <YAxis type="number" dataKey="y" domain={[-1, 1]} hide />
-          <ReferenceLine y={0} stroke={CHART.baselineBar} strokeWidth={2.2} />
-          {CHANGE_SCALE.map((code, i) => (
-            <ReferenceDot key={code} x={i} y={0} r={2.5} fill={CHART.white} stroke={CHART.neutral} strokeWidth={1.8} />
-          ))}
-          {position !== null && (
-            <Scatter data={[{ x: position, y: 0 }]} fill={color} shape="circle" isAnimationActive={false} />
-          )}
-        </ScatterChart>
-      </ResponsiveContainer>
+    <div className="cx-mini-chart cx-stability" role="img" aria-label={label}>
+      <span className="cx-stability-rail">
+        {CHANGE_SCALE.map((code, index) => (
+          <i key={code} className="cx-stability-tick" style={{ left: `${(index / last) * 100}%` }} />
+        ))}
+        {position !== null && (
+          <i className="cx-stability-dot" style={{ left: `${(position / last) * 100}%`, background: color }} />
+        )}
+      </span>
     </div>
   );
 }
@@ -152,11 +139,12 @@ import { hasValue, headcount, money, percent, scaledWon, signed } from "./format
 //   매출 전망  얼마 벌고 얼마 필요한지 (예상매출과 필요매출을 나란히)
 //   이전 자금  옮기는 데 돈이 되는지   (소요자금과 그 돈을 메울 정책금융)
 //   종합 판단  그래서 어디로 갈지     (해석과 후보 비교)
+// 아이콘은 이미 import 된 것으로 고른다 — 탭 하나 때문에 번들이 늘 이유가 없다.
 const TABS = [
-  { id: "market", label: "상권 정보" },
-  { id: "sales", label: "매출 전망" },
-  { id: "money", label: "이전 자금" },
-  { id: "summary", label: "종합 판단" },
+  { id: "market", label: "상권 정보", Icon: Building2 },
+  { id: "sales", label: "매출 전망", Icon: TrendingUp },
+  { id: "money", label: "이전 자금", Icon: Wallet },
+  { id: "summary", label: "종합 판단", Icon: Scale },
 ];
 
 function quarterMonths(value, compact = false) {
@@ -307,7 +295,12 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
                   </button>
                 </div>
               )}
-            <div className="cx-candidate-list">
+            {/* 행 수를 후보 수에 맞춘다. 3행 고정이면 후보가 1~2곳일 때 빈 행이 남는다.
+                후보가 적을 때는 카드를 지도 높이만큼 늘리지 않고 위로 붙인다 */}
+            <div
+              className={`cx-candidate-list${rows.length < 3 ? " is-sparse" : ""}`}
+              style={{ "--n": rows.length }}
+            >
               {rows.map((candidate) => {
                 const active = candidate.site_id === selected.site_id;
                 const candidateState = salesState(candidate);
@@ -316,7 +309,7 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
                     className={`cx-candidate ${active ? "is-active" : ""}`}
                     key={candidate.site_id}
                     type="button"
-                    aria-pressed={active}
+                    aria-current={active ? "true" : undefined}
                     onClick={() => { setCoachOff(true); setSelectedId(candidate.site_id); }}
                   >
                     <span className="cx-candidate-top">
@@ -329,7 +322,7 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
                         {candidateState?.gap >= 0
                           ? <Check size={15} strokeWidth={2.2} aria-hidden="true" />
                           : <CircleAlert size={15} strokeWidth={2.2} aria-hidden="true" />}
-                        {candidateState?.gap >= 0 ? "예상 매출 충족" : "예상 매출 부족"}
+                        {candidateState?.gap >= 0 ? "상권 평균 충족" : "상권 평균 미달"}
                       </span>
                       <ChevronRight size={18} aria-hidden="true" />
                     </span>
@@ -341,19 +334,36 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
           </div>
         </section>
 
-        <nav className="cx-tabs" aria-label="결과 분석 범위">
-          {TABS.map((item) => (
+        {/* 후보 비교 탭(.cx-nvc-tabs)과 같은 규약을 쓴다. 한 화면에서 같은 일을 하는 컨트롤이
+            스크린리더에 다르게 읽히면 안 된다. aria-current="page" 는 페이지 이동용이라 여기엔 맞지 않는다. */}
+        <div className="cx-tabs" role="tablist" aria-label="결과 분석 범위">
+          {TABS.map((item, index) => (
             <button
               key={item.id}
+              id={`cx-tab-${item.id}`}
               className={tab === item.id ? "is-active" : ""}
               type="button"
-              aria-current={tab === item.id ? "page" : undefined}
+              role="tab"
+              aria-selected={tab === item.id}
+              aria-controls={`cx-panel-${item.id}`}
+              tabIndex={tab === item.id ? 0 : -1}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+                event.preventDefault();
+                const step = event.key === "ArrowRight" ? 1 : TABS.length - 1;
+                const next = TABS[(index + step) % TABS.length];
+                setTab(next.id);
+                event.currentTarget.parentElement
+                  ?.querySelectorAll("button")
+                  [(index + step) % TABS.length]?.focus();
+              }}
               onClick={() => setTab(item.id)}
             >
+              <item.Icon size={17} strokeWidth={2.1} aria-hidden="true" />
               {item.label}
             </button>
           ))}
-        </nav>
+        </div>
 
         {tab !== "market" && (
           <section className="cx-guide" aria-label="결과 읽는 법">
@@ -366,6 +376,7 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
         )}
 
         {tab === "summary" && (
+          <div role="tabpanel" id="cx-panel-summary" aria-labelledby="cx-tab-summary">
           <SummaryPanel
             data={data}
             candidate={selected}
@@ -374,14 +385,24 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
             rankingReason={rankingReason}
             rows={rows}
             aiState={aiState}
+            onSelect={setSelectedId}
           />
+          </div>
         )}
         {tab === "sales" && (
+          <div role="tabpanel" id="cx-panel-sales" aria-labelledby="cx-tab-sales">
           <SalesPanel data={data} candidate={selected} rows={rows} recommendedId={recommendedId} places={places} />
+          </div>
         )}
-        {tab === "money" && <MoneyPanel data={data} candidate={selected} rows={rows} />}
+        {tab === "money" && (
+          <div role="tabpanel" id="cx-panel-money" aria-labelledby="cx-tab-money">
+            <MoneyPanel data={data} candidate={selected} rows={rows} />
+          </div>
+        )}
         {tab === "market" && (
-          <MarketPanel candidate={selected} rows={rows} recommendedId={recommendedId} places={places} />
+          <div role="tabpanel" id="cx-panel-market" aria-labelledby="cx-tab-market">
+            <MarketPanel candidate={selected} rows={rows} recommendedId={recommendedId} places={places} />
+          </div>
         )}
 
         <section className="cx-bottom-action">
@@ -481,87 +502,178 @@ function AiInsight({ candidate, overall, aiState }) {
  * 전에 쓰던 "판단 여유"(예상매출이 최소 필요매출을 넘는 폭)는 오해를 불렀다.
  * 여유가 2.2%뿐이라 위태로워 보이는 자리가 실제로는 지금보다 이익이 큰 경우가 있다.
  */
+/** 나란히 보기 막대의 툴팁. 값은 막대 위에 이미 적혀 있으니,
+ *  여기서는 그 막대가 무엇을 세는 값인지와 상대편과의 차이를 말한다. */
+function NowVsTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  return (
+    <div className="cx-rechart-tooltip">
+      <span>{label}</span>
+      <strong>{money(Math.round(row.value))}만원</strong>
+      {row.caption ? <small>{row.caption}</small> : null}
+      {row.diffText ? <small>{row.diffText}</small> : null}
+    </div>
+  );
+}
+
 /**
- * 후보 비교. 지금 매장을 0선에 두고 각 후보가 얼마나 달라지는지를 좌우로 그린다.
+ * 지금 매장 하나와 후보 한 곳을 나란히 세운다.
  *
- * 막대 방향은 유불리로 통일한다 — 오른쪽이면 나에게 좋은 쪽이다.
- * 숫자 부호는 실제 변화량을 따른다 — 운영비가 줄면 유리하지만 값은 마이너스다.
- * 그래서 운영비 축에서는 오른쪽으로 뻗은 막대에 마이너스 값이 붙는다. 색이 유불리를 보강한다.
+ * 전에는 후보 A·B·C를 0선 위에 겹쳐 그렸다. 그러면 "후보끼리 누가 나은가"는 보여도
+ * 정작 쓰는 사람이 묻는 "지금 5,200만원 팔던 내가 저기 가면 어떻게 되는가"가 화면에 없다.
+ *
+ * 지표마다 축이 완전히 다르다(유지비 550 vs 매출 5,200). 한 그래프에 넣으면 작은 쪽이
+ * 뭉개지므로, 지표별로 작은 세로 막대를 따로 세우고 그 안에서만 지금:후보를 견준다.
+ * 왼쪽 회색 막대(지금)는 후보를 바꿔도 그대로라, 움직이는 것이 곧 차이가 된다.
+ *
+ * 탭은 상단 후보 카드와 같은 selectedId 를 쓴다. 선택 상태를 따로 두면 두 곳이 어긋난다.
  */
-function CandidateDeltaCompare({ data, rows = [], recommendedId }) {
+function NowVsCandidate({ data, rows = [], selectedId, onSelect, recommendedId }) {
+  const candidate = rows.find((row) => row.site_id === selectedId) || rows[0];
+  if (!candidate) return null;
+
+  const cm = Number(data?.contribution_margin_rate);
   const nowSales = Number(data?.current_monthly_sales);
   const nowFixed = Number(data?.current_monthly_fixed_cost);
+  const nowProfit = Number(data?.current_operating_profit);
+  const candFixed = Number(candidate.monthly_operating_cost);
+  const candNeed = Number(candidate.min_required_sales);
+  const predicted = Number(candidate.ml?.predicted_monthly_sales);
+  // 후보에서 손에 남는 돈 = 상권 평균 매출 × 공헌이익률 − 후보 유지비.
+  // 변동비율은 지금과 같다고 본다(같은 업종 이전) — 계산 엔진의 가정과 맞춘다.
+  const candProfit = Number.isFinite(predicted) && Number.isFinite(cm)
+    ? predicted * cm - candFixed
+    : NaN;
 
-  const axes = [
-    {
-      key: "cost", label: "매달 나가는 운영비",
-      of: (row) => (Number.isFinite(nowFixed) ? Number(row.monthly_operating_cost) - nowFixed : NaN),
-      better: "down",
-    },
-    {
-      key: "need", label: "벌어야 하는 매출",
-      of: (row) => (Number.isFinite(nowSales) ? Number(row.min_required_sales) - nowSales : NaN),
-      better: "down",
-    },
-    {
-      key: "room", label: "예상 매출의 여유",
-      of: (row) => Number(row.ml?.predicted_monthly_sales) - Number(row.min_required_sales),
-      better: "up",
-    },
-    {
-      key: "fund", label: "추가로 마련할 돈",
-      of: (row) => -Number(row.additional_fund_needed),
-      better: "up",
-    },
-  ];
+  const metrics = [
+    { key: "cost", label: "매달 나가는 유지비", now: nowFixed, cand: candFixed, betterDown: true },
+    { key: "need", label: "벌어야 하는 매출", now: nowSales, cand: candNeed, betterDown: true,
+      nowCaption: "지금 파는 액수", candCaption: "최소 필요매출" },
+    { key: "left", label: "손에 남는 돈", now: nowProfit, cand: candProfit, betterDown: false,
+      note: "상권 평균 기준" },
+  ].filter((metric) => Number.isFinite(metric.now) && Number.isFinite(metric.cand));
 
-  const usable = axes.map((axis) => ({
-    ...axis,
-    values: rows.map((row) => ({ row, value: axis.of(row) })).filter((item) => Number.isFinite(item.value)),
-  })).filter((axis) => axis.values.length);
+  if (!metrics.length) return null;
 
-  if (!usable.length) {
-    return <div className="cx-empty"><strong>비교할 값이 아직 없어요.</strong><p>후보 정보를 불러오면 나란히 놓고 보여드려요.</p></div>;
-  }
+  const capital = Number(candidate.initial_capital);
+  const ownFund = Number(candidate.available_self_fund);
+  const shortfall = Number(candidate.additional_fund_needed);
 
   return (
-    <div className="cx-delta">
-      {usable.map((axis) => {
-        const scale = Math.max(...axis.values.map((item) => Math.abs(item.value)), 1);
-        const best = axis.values.reduce((a, b) => {
-          const better = axis.better === "up" ? b.value > a.value : b.value < a.value;
-          return better ? b : a;
-        });
-        return (
-          <div className="cx-delta-group" key={axis.key}>
-            <div className="cx-delta-head"><b>{axis.label}</b></div>
-            {axis.values.map(({ row, value }) => {
-              // 오른쪽이 유리한 쪽. 축이 "낮을수록 좋음"이면 값이 음수일 때 오른쪽으로 간다.
-              const favourable = axis.better === "up" ? value >= 0 : value <= 0;
-              const width = (Math.abs(value) / scale) * 50;
-              return (
-                <div className={`cx-delta-row${row.site_id === best.row.site_id ? " is-best" : ""}`} key={row.site_id}>
-                  <span className="cx-delta-who">{row.name}</span>
-                  <span
-                    className="cx-delta-track"
-                    role="img"
-                    aria-label={`${row.name} ${axis.label} ${value >= 0 ? "플러스" : "마이너스"} ${money(Math.abs(Math.round(value)))}만원, ${favourable ? "유리한 쪽" : "불리한 쪽"}이에요`}
-                  >
-                    <span className="cx-delta-zero" />
-                    <span
-                      className={`cx-delta-bar ${favourable ? "is-good" : "is-bad"}`}
-                      style={favourable ? { left: "50%", width: `${width}%` } : { right: "50%", width: `${width}%` }}
+    <div className="cx-nvc">
+      {/* 후보가 한 곳뿐이면 전환할 대상이 없어 탭 줄 자체를 두지 않는다 */}
+      {rows.length > 1 && (
+        <div className="cx-nvc-tabs" role="tablist" aria-label="비교할 후보 선택" style={{ "--n": rows.length }}>
+          {rows.map((row, index) => (
+            <button
+              key={row.site_id}
+              type="button"
+              role="tab"
+              aria-selected={row.site_id === candidate.site_id}
+              tabIndex={row.site_id === candidate.site_id ? 0 : -1}
+              onKeyDown={(event) => {
+                // role=tablist 는 좌우 화살표 이동이 규약이다
+                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+                event.preventDefault();
+                const step = event.key === "ArrowRight" ? 1 : rows.length - 1;
+                const next = rows[(index + step) % rows.length];
+                onSelect?.(next.site_id);
+                event.currentTarget.parentElement
+                  ?.querySelectorAll("button")
+                  [(index + step) % rows.length]?.focus();
+              }}
+              onClick={() => onSelect?.(row.site_id)}
+            >
+              후보 {row.site_id}{row.site_id === recommendedId ? " 추천" : ""}
+              <small>{row.name}</small>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="cx-nvc-grid">
+        {metrics.map((metric) => {
+          const diff = metric.cand - metric.now;
+          const good = metric.betterDown ? diff < 0 : diff > 0;
+          const gapText = diff === 0
+            ? "지금과 같아요"
+            : `지금보다 ${money(Math.abs(Math.round(diff)))}만원 ${diff > 0 ? "많아요" : "적어요"}`;
+          const bars = [
+            { name: "지금", value: Math.max(0, metric.now), caption: metric.nowCaption },
+            {
+              name: `후보 ${candidate.site_id}`,
+              value: Math.max(0, metric.cand),
+              caption: metric.candCaption || metric.note,
+              diffText: gapText,
+            },
+          ];
+          const top = Math.max(bars[0].value, bars[1].value) || 1;
+
+          return (
+            <section className="cx-nvc-cell" key={metric.key}>
+              <header>
+                <p>{metric.label}{metric.note ? <em>{metric.note}</em> : null}</p>
+                <strong className={diff === 0 ? "" : good ? "is-good" : "is-bad"}>
+                  {diff === 0 ? "같아요" : `${diff > 0 ? "+" : "−"}${money(Math.abs(Math.round(diff)))}만원`}
+                </strong>
+              </header>
+              <div
+                className="cx-rechart cx-nvc-rechart"
+                role="img"
+                aria-label={`${metric.label} — 지금 ${money(Math.round(metric.now))}만원, 후보 ${candidate.site_id} ${money(Math.round(metric.cand))}만원`}
+              >
+                <ResponsiveContainer width="100%" height={196}>
+                  <BarChart data={bars} margin={{ top: 26, right: 6, bottom: 4, left: 6 }}>
+                    <CartesianGrid vertical={false} stroke={CHART.grid} strokeDasharray="4 4" />
+                    <Tooltip
+                      content={<NowVsTooltip />}
+                      cursor={{ fill: "rgba(18,22,25,.035)" }}
+                      isAnimationActive={false}
                     />
-                  </span>
-                  <span className={`cx-delta-val ${favourable ? "is-good" : "is-bad"}`}>
-                    {value >= 0 ? "+" : "-"}{money(Math.abs(Math.round(value)))}만원
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fill: CHART.label, fontSize: 12.5, fontWeight: 700 }}
+                      axisLine={{ stroke: CHART.axis }}
+                      tickLine={false}
+                    />
+                    {/* 지표마다 축이 다르므로 눈금값은 숨기고 막대 위 숫자로 읽게 한다 */}
+                    <YAxis hide domain={[0, top * 1.2]} />
+                    <Bar dataKey="value" barSize={54} radius={[6, 6, 0, 0]} isAnimationActive={false}>
+                      <Cell fill={CHART.neutral} />
+                      <Cell fill={good ? CHART.brand : CHART.risk} />
+                      <LabelList
+                        dataKey="value"
+                        position="top"
+                        offset={9}
+                        fill={CHART.ink}
+                        fontSize={14}
+                        fontWeight={800}
+                        formatter={(value) => money(Math.round(value))}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              {metric.nowCaption && (
+                <p className="cx-nvc-caption">
+                  <span>{metric.nowCaption}</span>
+                  <span>{metric.candCaption}</span>
+                </p>
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      {Number.isFinite(capital) && (
+        <p className="cx-nvc-fund">
+          후보 {candidate.site_id}로 옮기는 데 <b>{money(capital)}만원</b>이 들어요.
+          {Number.isFinite(ownFund) && Number.isFinite(shortfall) && shortfall > 0
+            ? <> 가진 <b>{money(ownFund)}만원</b>을 빼면 <b>{money(shortfall)}만원</b>을 더 마련해야 해요.</>
+            : <> 지금 가진 돈으로 가능해요.</>}
+        </p>
+      )}
     </div>
   );
 }
@@ -581,7 +693,7 @@ function MarginCard({ data, candidate, fallbackBuffer }) {
       <aside className="cx-verdict-aside">
         <span>판단 여유</span>
         <strong>{fallbackBuffer == null ? "확인 불가" : percent(fallbackBuffer * 100)}</strong>
-        <p>예상 매출이 최소 필요매출을 넘는 폭이에요.</p>
+        <p>상권 평균 예상매출이 최소 필요매출을 넘는 폭이에요.</p>
       </aside>
     );
   }
@@ -647,7 +759,7 @@ function PaybackFormulaInfo({ formula }) {
   );
 }
 
-function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, aiState }) {
+function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, aiState, onSelect }) {
   const headline = candidate.site_id === data?.ranking?.recommended_candidate
     ? data?.overall?.headline || `후보 ${candidate.site_id}가 가장 현실적이에요.`
     : `후보 ${candidate.site_id}의 조건을 자세히 살펴볼게요.`;
@@ -662,7 +774,7 @@ function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, ai
           <div className="cx-status-row">
             <span className={state?.gap >= 0 ? "is-good" : "is-risk"}>
               {state?.gap >= 0 ? <Check size={15} /> : <CircleAlert size={15} />}
-              {state?.gap >= 0 ? `예상 매출이 기준보다 ${money(state.gap)}만원 높아요` : `예상 매출이 기준보다 ${money(Math.abs(state?.gap))}만원 부족해요`}
+              {state?.gap >= 0 ? `상권 평균이 기준보다 ${money(state.gap)}만원 높아요` : `상권 평균이 기준보다 ${money(Math.abs(state?.gap))}만원 부족해요`}
             </span>
             <span className={candidate.additional_fund_needed > 0 ? "is-risk" : "is-good"}>
               {candidate.additional_fund_needed > 0 ? <CircleAlert size={15} /> : <Check size={15} />}
@@ -696,10 +808,16 @@ function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, ai
 
       <section className="cx-section-card">
         <div className="cx-section-head">
-          <div><h2>지금과 견줘서 얼마나 달라지는지 봐요</h2></div>
-          <span className="cx-help">오른쪽이 유리한 쪽</span>
+          <div><h2>지금 매장과 나란히 놓고 봐요</h2></div>
+          <span className="cx-help">회색이 지금</span>
         </div>
-        <CandidateDeltaCompare data={data} rows={rows} recommendedId={data?.ranking?.recommended_candidate} />
+        <NowVsCandidate
+          data={data}
+          rows={rows}
+          selectedId={candidate.site_id}
+          onSelect={onSelect}
+          recommendedId={data?.ranking?.recommended_candidate}
+        />
         <p className="cx-data-source">출처: 서울 열린데이터 광장</p>
       </section>
     </div>
@@ -788,7 +906,7 @@ function RecoveryCurve({ data, candidate, pickedMonths }) {
               <Label value="회수 목표기간" position="insideBottom" offset={0} fill={CHART.label} fontSize={12} fontWeight={750} />
             </XAxis>
             <YAxis type="number" domain={yDomain} orientation="right" tickFormatter={(tick) => `${money(Math.round(tick))}만`} tick={{ fill: CHART.label, fontSize: 12, fontWeight: 650 }} axisLine={false} tickLine={false} width={72} />
-            <Tooltip content={<RecoveryTooltip />} cursor={{ stroke: CHART.green, strokeWidth: 1.5, strokeDasharray: "4 4" }} />
+            <Tooltip content={<RecoveryTooltip isAnimationActive={false} />} cursor={{ stroke: CHART.green, strokeWidth: 1.5, strokeDasharray: "4 4" }} />
             <Area type="monotone" dataKey="sales" name="필요 월매출" stroke="none" fill="url(#resultRecoveryFill)" isAnimationActive={false} />
             <Line type="monotone" dataKey="sales" name="필요 월매출" stroke={CHART.green} strokeWidth={4} dot={(props) => <RecoveryDot {...props} selectedMonth={months} />} activeDot={{ r: 6, fill: CHART.green, stroke: "#ffffff", strokeWidth: 2 }} isAnimationActive={false}>
               <LabelList content={(props) => <RecoveryPointLabel {...props} selectedIndex={months - M0} months={months} sales={value} />} />
@@ -879,7 +997,7 @@ function RequirementBreakdown({ data, candidate, current, required, lift }) {
             <CartesianGrid horizontal={false} stroke={CHART.grid} strokeDasharray="4 4" />
             <XAxis type="number" domain={[0, axis * 1.04]} hide />
             <YAxis type="category" dataKey="label" width={126} axisLine={false} tickLine={false} tick={{ fill: CHART.ink, fontSize: 12, fontWeight: 750 }} />
-            <Tooltip content={<BreakdownTooltip />} cursor={{ fill: "rgba(2,197,81,.05)" }} />
+            <Tooltip content={<BreakdownTooltip isAnimationActive={false} />} cursor={{ fill: "rgba(2,197,81,.05)" }} />
             <Bar dataKey="variable" name="팔면서 나가는 돈" stackId="total" fill={CHART.step1} radius={[8, 0, 0, 8]} isAnimationActive={false} />
             <Bar dataKey="fixed" name="매장 유지비" stackId="total" fill={CHART.step2} isAnimationActive={false} />
             <Bar dataKey="keep" name="손에 남는 돈" stackId="total" fill={CHART.green} radius={[0, 8, 8, 0]} isAnimationActive={false}>
@@ -933,12 +1051,12 @@ function SalesPanel({ data, candidate, rows, recommendedId, places }) {
 
       <section className="cx-section-card">
         <div className="cx-section-head">
-          <div><h2 id="predict-title">이 자리에서 얼마나 팔 수 있을지 추정했어요</h2></div>
-          <span className="cx-help">모델 추정치</span>
+          <div><h2 id="predict-title">이 상권 카페 한 곳이 평균 얼마나 파는지 추정했어요</h2></div>
+          <span className="cx-help">상권 평균 · 모델 추정</span>
         </div>
         {Number.isFinite(buffer) && (
           <p className="cx-sales-verdict">
-            후보 {candidate.site_id}의 예상매출은 최소 필요매출보다
+            후보 {candidate.site_id} 상권의 평균 예상매출은 최소 필요매출보다
             <b className={buffer >= 0 ? "is-good" : "is-short"}>
               {" "}{buffer >= 0 ? `${buffer.toFixed(1)}% 높아요` : `${Math.abs(buffer).toFixed(1)}% 모자라요`}
             </b>
@@ -1082,8 +1200,9 @@ function PredictedSalesTooltip({ active, payload, label }) {
   const row = payload[0].payload;
   return (
     <div className="cx-rechart-tooltip">
-      <span>{label}</span>
+      <span>{label} 상권 평균</span>
       <strong>{money(row.predicted)}만원</strong>
+      <small>이 상권 카페 한 곳 기준</small>
       {row.required != null && <small>최소 필요매출 {money(row.required)}만원</small>}
     </div>
   );
@@ -1105,7 +1224,7 @@ function PredictedSalesChart({ candidates = [], recommendedId }) {
   if (!data.length) return null;
 
   return (
-    <div className="cx-rechart cx-predict-rechart" role="img" aria-label="후보별 예상매출과 최소 필요매출 비교">
+    <div className="cx-rechart cx-predict-rechart" role="img" aria-label="후보별 상권 평균 예상매출과 최소 필요매출 비교">
       <ResponsiveContainer width="100%" height={data.length * 74 + 46}>
         <BarChart data={data} layout="vertical" margin={{ top: 16, right: 86, bottom: 6, left: 4 }} barGap={5}>
           <CartesianGrid horizontal={false} stroke={CHART.grid} strokeDasharray="4 4" />
@@ -1118,11 +1237,11 @@ function PredictedSalesChart({ candidates = [], recommendedId }) {
             tickLine={false}
             width={50}
           />
-          <Tooltip content={<PredictedSalesTooltip />} cursor={{ fill: "rgba(18,22,25,.035)" }} />
+          <Tooltip content={<PredictedSalesTooltip isAnimationActive={false} />} cursor={{ fill: "rgba(18,22,25,.035)" }} />
           <Bar dataKey="required" name="최소 필요매출" fill={CHART.baselineBar} barSize={11} radius={[0, 4, 4, 0]} isAnimationActive={false}>
             <LabelList dataKey="required" position="right" offset={7} fill={CHART.weak} fontSize={12} fontWeight={700} formatter={(v) => (v == null ? "" : `${money(v)}`)} />
           </Bar>
-          <Bar dataKey="predicted" name="예상매출" barSize={16} radius={[0, 4, 4, 0]} isAnimationActive={false}>
+          <Bar dataKey="predicted" name="상권 평균 예상매출" barSize={16} radius={[0, 4, 4, 0]} isAnimationActive={false}>
             {data.map((row) => (
               <Cell
                 key={row.label}
@@ -1136,8 +1255,8 @@ function PredictedSalesChart({ candidates = [], recommendedId }) {
         </BarChart>
       </ResponsiveContainer>
       <p className="cx-predict-legend">
-        <span><i className="is-recommended" />추천 후보 예상매출</span>
-        <span><i className="is-predicted" />그 밖의 후보 예상매출</span>
+        <span><i className="is-recommended" />추천 후보 상권 평균</span>
+        <span><i className="is-predicted" />그 밖의 후보 상권 평균</span>
         <span><i className="is-required" />최소 필요매출</span>
       </p>
     </div>
@@ -1174,6 +1293,7 @@ function PredictedSales({ candidates = [], recommendedId, places }) {
                   <span>후보 {row.site_id}{row.site_id === recommendedId ? " 추천 후보" : ""}</span>
                 </div>
                 <div className="cx-predict-value">
+                  <span className="cx-predict-unit">상권 평균 한 곳</span>
                   <strong>{value == null ? "확인 불가" : `${money(value)}만원`}</strong>
                   {value != null && <span className={`cx-predict-basis${basis.tone}`}>{basis.label}</span>}
                 </div>
@@ -1193,6 +1313,8 @@ function PredictedSales({ candidates = [], recommendedId, places }) {
         {basisQuarter && targetQuarter
           ? `${basisQuarter}까지 공개된 실적으로 ${targetQuarter} 매출을 추정한 값이에요. `
           : ""}
+        이 상권 커피·음료 총매출을 점포 수로 나눈 <b>평균 한 곳</b> 기준이에요.
+        지금 매장이 상권 평균보다 잘 팔고 있다면 후보지에서도 이 값보다 높을 수 있고, 그 반대도 마찬가지예요.
         관측된 매출이 아니라 모델이 추정한 값이라 실제 매출을 보장하지 않아요.
         {anyFallback && " 자치구 평균으로 대체한 후보는 그 상권만의 매출 기록이 없어서, 실측 기반 후보와 같은 무게로 비교하면 안 돼요."}
       </p>
@@ -1426,7 +1548,7 @@ function FootfallTrendChart({ candidates = [], recommendedId }) {
                     <CartesianGrid vertical={false} stroke={CHART.grid} strokeDasharray="4 4" />
                     <XAxis dataKey="quarter" tick={<FootfallQuarterTick />} axisLine={false} tickLine={false} interval={0} height={46} />
                     <YAxis domain={[-scaleCeiling, scaleCeiling]} ticks={[-scaleCeiling, 0, scaleCeiling]} tickFormatter={(tick) => `${tick > 0 ? "+" : ""}${tick.toFixed(2)}%`} tick={{ fill: CHART.weak, fontSize: 10 }} axisLine={false} tickLine={false} width={58} />
-                    <Tooltip content={<FootfallTooltip />} cursor={{ fill: "rgba(18,22,25,.035)" }} />
+                    <Tooltip content={<FootfallTooltip isAnimationActive={false} />} cursor={{ fill: "rgba(18,22,25,.035)" }} />
                     <ReferenceLine y={0} stroke={CHART.label} strokeWidth={2.2} />
                     <Bar dataKey="qoq" name="이전 3개월 대비" maxBarSize={34} radius={[5, 5, 5, 5]} isAnimationActive={false}>
                       {item.points.map((point, index) => {
@@ -1760,7 +1882,7 @@ function MarketTrendChart({ candidates = [], recommendedId }) {
             )}
             <XAxis dataKey="quarter" tickFormatter={(quarter) => quarterMonths(quarter, true)} tick={{ fill: CHART.label, fontSize: 12, fontWeight: 650 }} axisLine={{ stroke: CHART.axis }} tickLine={false} interval="preserveStartEnd" />
             <YAxis type="number" domain={[axisMin, axisMax]} tickFormatter={(value) => scaledWon(value)} tick={{ fill: CHART.label, fontSize: 11 }} axisLine={false} tickLine={false} width={70} />
-            <Tooltip content={<MarketTrendTooltip series={series} recommendedId={recommendedId} />} cursor={{ stroke: CHART.label, strokeWidth: 1.2, strokeDasharray: "4 4" }} />
+            <Tooltip content={<MarketTrendTooltip series={series} recommendedId={recommendedId} isAnimationActive={false} />} cursor={{ stroke: CHART.label, strokeWidth: 1.2, strokeDasharray: "4 4" }} />
             {renderSeries.map((item) => {
               const color = item.id === recommendedId ? TREND_RECOMMENDED : TREND_NEUTRAL;
               return (
