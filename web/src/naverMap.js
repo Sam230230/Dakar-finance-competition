@@ -11,8 +11,10 @@ const READY_TIMEOUT_MS = 20000;
 // 순서가 중요하다. 실패한 스크립트가 나중에 실행되면 이미 채워진 naver.maps 를
 // 빈 객체로 덮어써서, 성공했다가 다시 망가지는 일이 생긴다.
 // 그래서 한 번에 하나씩만 붙이고, 앞의 것이 확실히 실패한 뒤에만 다음으로 넘어간다.
-// 지금 쓰는 키(구형 Client ID)가 통하는 쪽을 앞에 둔다.
-const KEY_PARAMS = ["ncpClientId", "ncpKeyId"];
+// ncpKeyId 를 앞에 둔다. 인증 엔드포인트에 직접 물어보니 ncpClientId 는 지금 쓰는
+// 키에 대해 InvalidParameter 로 즉시 거절된다 — 구형 파라미터는 폐기됐다.
+// 뒤에 남겨두는 건 아직 구형 발급분을 쓰는 환경이 있을 경우의 대비일 뿐이다.
+const KEY_PARAMS = ["ncpKeyId", "ncpClientId"];
 
 /** 네임스페이스만 생긴 게 아니라 실제로 쓸 수 있는 상태인지 확인한다. */
 function mapsReady() {
