@@ -46,6 +46,14 @@ PRECISION_ORDER = ("none", "city", "district", "dong", "land", "road")
 PRECISION_MIN_FOR_TRDAR = "land"
 
 
+def element_value(address_elements: list, wanted: str) -> str:
+    """addressElements 에서 특정 타입의 값을 꺼낸다. 없으면 빈 문자열."""
+    for element in address_elements or []:
+        if wanted in (element.get("types") or []) and element.get("longName"):
+            return str(element["longName"])
+    return ""
+
+
 def classify_precision(address_elements: list) -> str:
     """NCP addressElements 로 주소 해석 단위를 판정한다.
 
@@ -86,6 +94,7 @@ class GeoPoint:
     jibun_address: str    # 지번 주소
     matched: bool = True  # 주소가 실제로 매칭됐는지
     precision: str = "none"  # classify_precision 결과
+    sido: str = ""        # 시·도. 상권 데이터가 서울시 것뿐이라 범위 판단에 쓴다
 
 
 def _build_request(address: str, key_id: str, key: str) -> urllib.request.Request:
@@ -110,6 +119,7 @@ def parse_response(payload: dict) -> Optional[GeoPoint]:
         jibun_address=a.get("jibunAddress", ""),
         matched=True,
         precision=classify_precision(a.get("addressElements")),
+        sido=element_value(a.get("addressElements"), "SIDO"),
     )
 
 

@@ -16,7 +16,10 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
   // 한 번에 한 카드만 펼친다. 처음엔 모두 접힌 상태로 시작.
   const [openIndex, setOpenIndex] = useState(null);
   // 후보 index → 주소 지적 문구
+  // 후보 index → 주소 알림 문구. 진행을 막지는 않고 무엇이 부정확해지는지만 알린다.
   const [rejects, setRejects] = useState({});
+  // 그 알림이 어떤 주소 값에 대한 것인지. 같은 값으로 다시 누르면 확인한 것으로 본다.
+  const [noticedFor, setNoticedFor] = useState({});
   const [checking, setChecking] = useState(false);
   // "입력 완료"로 지금 확인 중인 카드 index. 카드마다 따로 눌리므로 하나만 잡아두면 된다.
   const [verifying, setVerifying] = useState(null);
@@ -46,7 +49,10 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
 
   function patch(i, key, value) {
     setList(l => l.map((c, idx) => (idx === i ? { ...c, [key]: value } : c)));
-    if (key === "address") setRejects(r => (r[i] ? { ...r, [i]: "" } : r));
+    if (key === "address") {
+      setRejects(r => (r[i] ? { ...r, [i]: "" } : r));
+      setNoticedFor(n => (n[i] ? { ...n, [i]: null } : n));
+    }
   }
 
   // 채워진 후보 주소를 한꺼번에 확인한다. 서로 독립이라 동시에 던진다.
@@ -59,14 +65,19 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
     setChecking(false);
 
     const next = {};
+    const seen = {};
     let firstBad = null;
     results.forEach((result, n) => {
-      if (result.ok) return;
-      const { i } = filledRows[n];
+      const { c, i } = filledRows[n];
+      const address = (c.address || "").trim();
+      if (!result.message) return;
       next[i] = result.message;
-      if (firstBad === null) firstBad = i;
+      seen[i] = result.ok ? address : null;
+      // 이미 같은 값으로 알린 카드는 다시 붙잡지 않는다
+      if (firstBad === null && (!result.ok || noticedFor[i] !== address)) firstBad = i;
     });
     setRejects(next);
+    setNoticedFor(n => ({ ...n, ...seen }));
     if (firstBad !== null) {
       openCard(firstBad);
       return;
@@ -107,9 +118,11 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
     const result = await verifyAddress(list[i].address);
     setVerifying(null);
 
-    if (!result.ok) {
+    const address = (list[i].address || "").trim();
+    if (!result.ok || (result.message && noticedFor[i] !== address)) {
       setRejects(r => ({ ...r, [i]: result.message }));
-      // 카드는 닫지 않고 고칠 자리로 되돌린다
+      setNoticedFor(n => ({ ...n, [i]: result.ok ? address : null }));
+      // 카드는 닫지 않고 고칠 자리로 되돌린다. 그대로 두고 다시 누르면 넘어간다.
       const input = addrRefs.current[i];
       if (input) {
         input.focus();
@@ -278,7 +291,7 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
                         placeholder="예: 서울 성동구 성수이로 22"
                         aria-invalid={rejects[i] ? "true" : undefined}
                       />
-                      {rejects[i] ? <p className="field-reject" role="alert">{rejects[i]}</p> : null}
+                      {rejects[i] ? <p className="field-notice" role="status">{rejects[i]}</p> : null}
                     </div>
 
                     <div className="section-label">매달 반복되는 비용</div>

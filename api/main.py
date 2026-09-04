@@ -252,14 +252,54 @@ DEMO_LOCATIONS = {
 }
 
 
+#: 상권 데이터는 서울시 것뿐이다. 다른 시·도 주소는 최근접 상권으로 폴백되는데,
+#: 부산 주소가 312km 떨어진 강남 상권으로 매칭되는 식이라 그대로 쓰면 거짓말이 된다.
+SUPPORTED_SIDO = "서울특별시"
+
+
+def _area_confidence(match, sido: str) -> str:
+    """이 좌표에 상권 지표를 붙여도 되는지.
+
+      "exact"       상권 폴리곤 안. 그대로 신뢰한다.
+      "nearby"      상권 밖이지만 서울. 최근접 상권으로 근사했음을 밝히고 쓴다.
+      "unsupported" 서울 밖. 상권 지표를 붙이면 안 된다.
+    """
+    if sido and sido != SUPPORTED_SIDO:
+        return "unsupported"
+    return "exact" if match.matched else "nearby"
+
+
 def _area_payload(*, address: str, lat: float, lng: float, road_address: Optional[str] = None,
-                  precision: str = "point"):
-    """좌표 → 상권 + 그 좌표가 상권을 특정할 만큼 정확한 주소에서 나왔는지.
+                  precision: str = "point", sido: str = ""):
+    """좌표 → 상권 + 그 상권 지표를 믿어도 되는지.
 
     precision 기본값이 "point" 인 것은 지도 클릭처럼 주소를 거치지 않은 호출 때문이다.
     그 경우 좌표 자체가 사용자가 찍은 지점이라 주소 단위를 따질 필요가 없다.
+
+    서비스는 어떤 주소를 넣어도 결과를 내야 한다. 다만 상권 데이터가 없는 지역까지
+    억지로 붙이지는 않는다 — 손익·회수 계산은 주소와 무관하게 그대로 나온다.
     """
     match = lookup_trdar(lat, lng)
+    confidence = _area_confidence(match, sido)
+    if confidence == "unsupported":
+        # 상권코드를 비워 보낸다. 채워 보내면 화면이 남의 동네 지표를 그린다.
+        return {
+            "address": address,
+            "road_address": road_address or address,
+            "lat": lat,
+            "lng": lng,
+            "precision": precision,
+            "trdar_reliable": False,
+            "precision_required": PRECISION_MIN_FOR_TRDAR,
+            "area_confidence": confidence,
+            "sido": sido,
+            "matched": False,
+            "trdar_cd": None,
+            "trdar_nm": None,
+            "distance_m": match.distance_m,
+            "note": "서울시 상권 데이터만 있어 이 지역은 상권 지표를 붙이지 않아요.",
+            "boundary": None,
+        }
     return {
         "address": address,
         "road_address": road_address or address,
@@ -267,8 +307,10 @@ def _area_payload(*, address: str, lat: float, lng: float, road_address: Optiona
         "lng": lng,
         "precision": precision,
         # 상권 지표를 이 주소의 것으로 읽어도 되는지. 구·동 단위면 False.
-        "trdar_reliable": precision == "point" or precision_at_least(precision),
+        "trdar_reliable": (precision == "point" or precision_at_least(precision)) and confidence == "exact",
         "precision_required": PRECISION_MIN_FOR_TRDAR,
+        "area_confidence": confidence,
+        "sido": sido,
         "matched": match.matched,
         "trdar_cd": match.trdar_cd,
         "trdar_nm": match.trdar_nm,
@@ -311,7 +353,8 @@ def commercial_area(req: CommercialAreaRequest):
     try:
         point = geocode(req.address)
         return _area_payload(address=req.address, road_address=point.road_address,
-                             lat=point.lat, lng=point.lng, precision=point.precision)
+                             lat=point.lat, lng=point.lng, precision=point.precision,
+                             sido=point.sido)
     except GeocodeError as e:
         # 데모 주소는 REST Geocoding 키가 없어도 재현 가능하게 로컬 좌표로 폴백.
         normalized = " ".join(req.address.split())

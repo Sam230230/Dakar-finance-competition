@@ -6,21 +6,21 @@ const UNIT = { city: "시", district: "구", dong: "동" };
 const EXAMPLE = "예: 서울 송파구 올림픽로 300";
 
 /**
- * 주소가 상권 하나를 특정할 만큼 구체적인지 백엔드에 확인한다.
+ * 주소를 확인하고 무엇을 알려줄지 정한다.
  *
- * 상권(TRDAR)은 한 변이 수백 m라, "서울 송파구" 같은 구 단위 주소로는 어느 상권인지
- * 정해지지 않는다. 그런 주소도 지오코딩은 성공하고(구 중심점) 그 점이 우연히 걸린
- * 상권이 잡히기 때문에, 겉보기에는 정상처럼 보이면서 엉뚱한 상권 지표가 나온다.
+ * 서비스라서 어떤 주소를 넣어도 결과는 나와야 한다. 그래서 진행을 막는 경우는
+ * "주소가 비었다" 하나뿐이다. 나머지는 전부 통과시키고 무엇이 부정확해지는지만 말한다.
  *
- * 검증은 도움이지 관문이 아니다. 백엔드가 죽어 있으면 통과시킨다 —
- * 여기서 막아도 어차피 마지막 분석에서 같은 오류를 만나고, 그때 메시지가 더 정확하다.
+ * 상권(TRDAR)은 한 변이 수백 m라 "서울 송파구" 같은 주소로는 어느 상권인지 정해지지
+ * 않는다. 그래도 손익·회수 계산은 매출과 비용만으로 나오므로 결과 자체는 유효하다.
+ * 부정확해지는 건 상권 지표(예상매출·점포 수·안정도·정책)뿐이다.
  *
- * @param {string} address
- * @returns {Promise<{ok: boolean, message: string, trdarNm?: string}>}
+ * @returns {Promise<{ok: boolean, message: string, tone?: "warn"|"error", trdarNm?: string}>}
+ *   ok=false 는 빈 주소일 때만. message 가 있으면 그대로 보여주되 진행은 허용한다.
  */
 export async function verifyAddress(address) {
   const query = (address || "").trim();
-  if (query === "") return { ok: false, message: "주소를 입력해 주세요." };
+  if (query === "") return { ok: false, message: "주소를 입력해 주세요.", tone: "error" };
 
   let res;
   try {
@@ -30,13 +30,17 @@ export async function verifyAddress(address) {
       body: JSON.stringify({ address: query })
     });
   } catch {
-    return { ok: true, message: "" }; // 서버에 닿지 못함 — 막지 않는다
+    return { ok: true, message: "" }; // 서버에 닿지 못함 — 조용히 통과
   }
 
   if (res.status === 400) {
-    return { ok: false, message: `이 주소를 찾지 못했어요. 도로명 주소로 다시 넣어 주세요. (${EXAMPLE})` };
+    return {
+      ok: true,
+      tone: "warn",
+      message: `이 주소를 찾지 못했어요. 상권 지표 없이 손익 계산만 보여드려요. (${EXAMPLE})`
+    };
   }
-  if (!res.ok) return { ok: true, message: "" };
+  if (!res.ok) return { ok: true, message: "" }; // 서버 설정·네트워크 문제 — 사용자 잘못이 아니다
 
   let data;
   try {
@@ -45,15 +49,25 @@ export async function verifyAddress(address) {
     return { ok: true, message: "" };
   }
 
+  if (data.area_confidence === "unsupported") {
+    return {
+      ok: true,
+      tone: "warn",
+      message: `상권 데이터는 서울시만 있어요. ${data.sido || "이 지역"} 주소는 손익 계산만 보여드려요.`
+    };
+  }
+
   if (data.trdar_reliable) {
     return { ok: true, message: "", trdarNm: data.trdar_nm };
   }
 
   const unit = UNIT[data.precision];
+  const where = data.trdar_nm ? `가장 가까운 ‘${data.trdar_nm}’ 상권 기준으로 보여드려요.` : "";
   return {
-    ok: false,
+    ok: true,
+    tone: "warn",
     message: unit
-      ? `${unit} 단위까지만 확인돼요. 상권은 한 구에도 수십 개라 도로명과 건물번호가 필요해요. (${EXAMPLE})`
-      : `도로명과 건물번호까지 넣어 주세요. (${EXAMPLE})`
+      ? `${unit} 단위까지만 확인돼요. ${where} 정확히 보려면 도로명과 건물번호를 넣어 주세요. (${EXAMPLE})`
+      : `주소가 상권 밖이에요. ${where} (${EXAMPLE})`
   };
 }

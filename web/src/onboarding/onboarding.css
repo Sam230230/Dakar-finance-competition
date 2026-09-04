@@ -1472,18 +1472,24 @@ h1 {
   min-height: 0;
 }
 
-/* 형식은 맞지만 뒤에서 못 쓰는 값(예: 구 단위 주소)에 붙는 지적.
-   빈 값 오류(.input-line.error)와 달리 왜 안 되는지를 문장으로 알려줘야 한다. */
-.field-reject {
+/* 진행을 막지 않는 알림. 주소가 구 단위라 상권이 정해지지 않는다거나
+   서울 밖이라 상권 데이터가 없다거나 — 결과는 나오되 무엇이 부정확해지는지 말한다.
+   빨강(--danger)이 아니라 주황을 쓴다. 틀린 게 아니라 덜 정확할 뿐이다. */
+.field-notice {
   margin: 10px 0 0;
-  color: var(--danger);
-  font-size: 13.5px;
-  line-height: 1.55;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--orange-soft);
+  color: var(--orange);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
 }
 
-.field .field-reject {
+.field .field-notice {
   margin-top: 7px;
-  font-size: 12.5px;
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .input-line.error {
