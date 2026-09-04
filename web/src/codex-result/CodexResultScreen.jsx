@@ -186,7 +186,21 @@ function dataRecencyNote(basisQuarter, targetQuarter) {
     : `${base} 옅은 구간은 다음 분기 추정이에요.`;
 }
 
+/**
+ * 이 예측을 판정에 써도 되는지.
+ *
+ * 상권코드가 없으면(서울 밖 주소 등) 백엔드가 합성 모델로 숫자를 만들어 내고
+ * status 는 "ok" 로 준다. 그 숫자로 충족·미달을 말하면 지어낸 근거로 판단을
+ * 내주는 셈이라, 실측이나 자치구 평균에 근거한 예측만 통과시킨다.
+ */
+function hasGroundedPrediction(candidate) {
+  const ml = candidate?.ml;
+  if (!ml || ml.status !== "ok") return false;
+  return ml.data_completeness === "trdar_exact" || ml.data_completeness === "district_fallback";
+}
+
 function salesState(candidate) {
+  if (!hasGroundedPrediction(candidate)) return null;
   const predicted = Number(candidate?.ml?.predicted_monthly_sales);
   const required = Number(candidate?.min_required_sales);
   if (!Number.isFinite(predicted) || !Number.isFinite(required) || !required) return null;
@@ -318,11 +332,14 @@ export default function CodexResultScreen({ data, places, aiState, onRestart = (
                     </span>
                     <strong className="cx-place">{candidate.name}</strong>
                     <span className="cx-card-foot">
-                      <span className={`cx-card-state ${candidateState?.gap >= 0 ? "is-good" : "is-risk"}`}>
-                        {candidateState?.gap >= 0
-                          ? <Check size={15} strokeWidth={2.2} aria-hidden="true" />
-                          : <CircleAlert size={15} strokeWidth={2.2} aria-hidden="true" />}
-                        {candidateState?.gap >= 0 ? "상권 평균 충족" : "상권 평균 미달"}
+                      {/* 근거가 없는데 "미달"이라고 하면 없는 판정을 지어내는 것이다 */}
+                      <span className={`cx-card-state ${!candidateState ? "" : candidateState.gap >= 0 ? "is-good" : "is-risk"}`}>
+                        {!candidateState
+                          ? <Info size={15} strokeWidth={2.2} aria-hidden="true" />
+                          : candidateState.gap >= 0
+                            ? <Check size={15} strokeWidth={2.2} aria-hidden="true" />
+                            : <CircleAlert size={15} strokeWidth={2.2} aria-hidden="true" />}
+                        {!candidateState ? "상권 데이터 없음" : candidateState.gap >= 0 ? "상권 평균 충족" : "상권 평균 미달"}
                       </span>
                       <ChevronRight size={18} aria-hidden="true" />
                     </span>
@@ -542,7 +559,8 @@ function NowVsCandidate({ data, rows = [], selectedId, onSelect, recommendedId }
   const predicted = Number(candidate.ml?.predicted_monthly_sales);
   // 후보에서 손에 남는 돈 = 상권 평균 매출 × 공헌이익률 − 후보 유지비.
   // 변동비율은 지금과 같다고 본다(같은 업종 이전) — 계산 엔진의 가정과 맞춘다.
-  const candProfit = Number.isFinite(predicted) && Number.isFinite(cm)
+  // 합성 예측으로 "손에 남는 돈"을 그리면 지어낸 숫자를 비교에 올리게 된다
+  const candProfit = hasGroundedPrediction(candidate) && Number.isFinite(predicted) && Number.isFinite(cm)
     ? predicted * cm - candFixed
     : NaN;
 
@@ -772,9 +790,13 @@ function SummaryPanel({ data, candidate, state, drivers, rankingReason, rows, ai
           <h2>{headline}</h2>
           <p className="cx-summary-copy">{data?.comparison_summary || "계산된 조건을 기준으로 후보지를 비교했어요."}</p>
           <div className="cx-status-row">
-            <span className={state?.gap >= 0 ? "is-good" : "is-risk"}>
-              {state?.gap >= 0 ? <Check size={15} /> : <CircleAlert size={15} />}
-              {state?.gap >= 0 ? `상권 평균이 기준보다 ${money(state.gap)}만원 높아요` : `상권 평균이 기준보다 ${money(Math.abs(state?.gap))}만원 부족해요`}
+            <span className={!state ? "is-muted" : state.gap >= 0 ? "is-good" : "is-risk"}>
+              {!state ? <Info size={15} /> : state.gap >= 0 ? <Check size={15} /> : <CircleAlert size={15} />}
+              {!state
+                ? "이 지역은 상권 데이터가 없어 매출 비교를 못 해요"
+                : state.gap >= 0
+                  ? `상권 평균이 기준보다 ${money(state.gap)}만원 높아요`
+                  : `상권 평균이 기준보다 ${money(Math.abs(state.gap))}만원 부족해요`}
             </span>
             <span className={candidate.additional_fund_needed > 0 ? "is-risk" : "is-good"}>
               {candidate.additional_fund_needed > 0 ? <CircleAlert size={15} /> : <Check size={15} />}
@@ -1032,7 +1054,8 @@ function SalesPanel({ data, candidate, rows, recommendedId, places }) {
   const lift = Number.isFinite(current) && current > 0 && Number.isFinite(required)
     ? (required / current - 1) * 100
     : null;
-  const buffer = Number.isFinite(predicted) && Number.isFinite(required) && required > 0
+  const buffer = hasGroundedPrediction(candidate) && Number.isFinite(predicted)
+    && Number.isFinite(required) && required > 0
     ? (predicted / required - 1) * 100
     : null;
 
@@ -1269,8 +1292,23 @@ function PredictedSalesChart({ candidates = [], recommendedId }) {
  * 여기서만 말한다. 관측값 그룹과 섞지 않고 따로 세워 두는 이유다.
  */
 function PredictedSales({ candidates = [], recommendedId, places }) {
-  const usable = candidates.filter((row) => hasValue(row.ml?.predicted_monthly_sales));
-  if (!usable.length) return null;
+  // 합성 폴백은 숫자가 있어도 빼낸다. 최소 필요매출과 나란히 그리는 순간
+  // 지어낸 값이 판정 근거처럼 읽힌다.
+  const usable = candidates.filter(
+    (row) => hasGroundedPrediction(row) && hasValue(row.ml?.predicted_monthly_sales)
+  );
+  const missing = candidates.filter((row) => !hasGroundedPrediction(row));
+  if (!usable.length) {
+    return (
+      <div className="cx-empty">
+        <strong>이 지역은 상권 매출 데이터가 없어요.</strong>
+        <p>
+          상권 데이터는 서울시 것만 있어서 예상 매출을 낼 수 없어요.
+          매출·비용으로 계산하는 최소 필요매출과 회수기간은 그대로 보실 수 있어요.
+        </p>
+      </div>
+    );
+  }
 
   const basisQuarter = hasValue(usable[0].ml?.basis_quarter) ? quarterMonths(usable[0].ml.basis_quarter) : null;
   const targetQuarter = hasValue(usable[0].ml?.target_quarter) ? quarterMonths(usable[0].ml.target_quarter) : null;
@@ -1309,6 +1347,11 @@ function PredictedSales({ candidates = [], recommendedId, places }) {
         </div>
         <PredictedSalesChart candidates={candidates} recommendedId={recommendedId} />
       </div>
+      {missing.length > 0 && (
+        <p className="cx-predict-missing">
+          {missing.map((row) => `후보 ${row.site_id}`).join(", ")}는 상권 데이터가 없어 이 비교에서 빠졌어요.
+        </p>
+      )}
       <p className="cx-predict-note">
         {basisQuarter && targetQuarter
           ? `${basisQuarter}까지 공개된 실적으로 ${targetQuarter} 매출을 추정한 값이에요. `
