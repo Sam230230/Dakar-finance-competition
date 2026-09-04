@@ -16,13 +16,24 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     region: singapore          # 한국에서 가장 가깝다
-    plan: starter              # 512MB. 워밍업 후 225MB 를 쓰므로 여유가 크지 않다
+    # 실측: 컨테이너에서 torch + 임베딩 모델을 올리면 1.1GB 를 쓴다.
+    #   512MB → OOM Killed (스레드를 1개로 줄여도 마찬가지)
+    #   1GB   → 뜨긴 하지만 96% 라 부하가 오면 죽는다
+    #   2GB   → 54%, 연속 요청에도 안정
+    # torch 를 들어내기 전까지는 standard 미만으로 못 내려간다.
+    plan: standard
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
-      # 워밍업을 켜 두면 첫 요청의 2.2초가 사라진다. 대신 기동이 그만큼 늦다.
+      # 워밍업을 켜 두면 첫 요청의 지연이 사라진다. 대신 기동이 그만큼 늦다(약 20초).
+      # 끄더라도 첫 요청에서 결국 같은 메모리를 쓰므로 플랜을 낮추는 효과는 없다.
       - key: WARMUP_MODELS
         value: "true"
+      # torch/BLAS 가 코어 수만큼 스레드를 잡는다. 컨테이너에서는 낭비라 묶어 둔다.
+      - key: OMP_NUM_THREADS
+        value: "2"
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
       # 프론트 주소. 배포 후 실제 도메인으로 바꾼다. 비워 두면 모든 출처를 허용한다.
       - key: ALLOWED_ORIGINS
         sync: false
