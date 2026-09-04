@@ -1472,6 +1472,20 @@ h1 {
   min-height: 0;
 }
 
+/* 형식은 맞지만 뒤에서 못 쓰는 값(예: 구 단위 주소)에 붙는 지적.
+   빈 값 오류(.input-line.error)와 달리 왜 안 되는지를 문장으로 알려줘야 한다. */
+.field-reject {
+  margin: 10px 0 0;
+  color: var(--danger);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.field .field-reject {
+  margin-top: 7px;
+  font-size: 12.5px;
+}
+
 .input-line.error {
   border-bottom-color: var(--danger);
   animation: shake .3s ease;

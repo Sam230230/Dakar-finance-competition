@@ -39,40 +39,44 @@ export function lowerOrEqualCandidates(state) {
 
 export function scenario(n) {
   // 최신 데이터 — 2026-09-02 jc1004.co.kr 양도양수 매물(투썸플레이스) 기준.
-  // 현재 강동구, 후보는 송파구 은평구 금천구. 상세 지번은 매물 특성상 비공개라 자치구까지만 넣는다.
+  // 현재 강동구(427239), 후보는 송파구(427240) 은평구(427238) 금천구(427209).
+  // 주소는 매물 소재지의 도로명까지다. 상세 지번은 매물 특성상 비공개라 건물 단위에서 멈춘다 —
+  // 상권(TRDAR)은 한 변이 수백 m라 이 정도면 어느 상권인지 정해진다.
   // 월 변동비는 월지출에서 고정비를 뺀 값이고, 고정비 항목별 배분과 가용현금은 추정치다.
   if (n === 0) {
     return {
       demoScenario: 0,
       current: {
-        address: "서울 강동구",
+        address: "서울 강동구 천호대로 1037",
         sales: 5200, variable: 3600,
         rent: 300, labor: 200, mgmt: 50, fixed: 550,
         cash: 5000, depositReturn: 10000, keyMoneyRecovery: 21000
       },
       candidateCount: 3,
       candidates: [
-        { address: "서울 송파구", rent: 270, management: 70, otherFixed: 110, deposit: 7000, interior: 1300, moving: 250, restoration: 700, rights: 19000, otherMove: 100, closedDays: 10 },
-        { address: "서울 은평구", rent: 300, management: 75, otherFixed: 125, deposit: 8000, interior: 1200, moving: 250, restoration: 700, rights: 16000, otherMove: 100, closedDays: 10 },
-        { address: "서울 금천구", rent: 600, management: 150, otherFixed: 250, deposit: 12000, interior: 750, moving: 250, restoration: 700, rights: 3000, otherMove: 100, closedDays: 10 }
+        { address: "서울 송파구 송파대로 437", rent: 270, management: 70, otherFixed: 110, deposit: 7000, interior: 1300, moving: 250, restoration: 700, rights: 19000, otherMove: 100, closedDays: 10 },
+        { address: "서울 은평구 연서로 223 2", rent: 300, management: 75, otherFixed: 125, deposit: 8000, interior: 1200, moving: 250, restoration: 700, rights: 16000, otherMove: 100, closedDays: 10 },
+        { address: "서울 금천구 시흥대로 228", rent: 600, management: 150, otherFixed: 250, deposit: 12000, interior: 750, moving: 250, restoration: 700, rights: 3000, otherMove: 100, closedDays: 10 }
       ],
       recoveryMonths: null
     };
   }
+  // 시나리오 1·2는 예시값이다. 주소는 원래 동을 대표하는 실제 도로명으로 적는다 —
+  // 상권은 한 변이 수백 m라 동 단위 주소로는 어느 상권인지 정해지지 않기 때문.
   if (n === 1) {
     return {
       demoScenario: 1,
       current: {
-        address: "서울 마포구 연남동",
+        address: "서울 마포구 동교로 262",
         sales: 2800, variable: 980,
         rent: 700, labor: 200, mgmt: 150, fixed: 1050,
         cash: 1500, depositReturn: 2700, keyMoneyRecovery: 0
       },
       candidateCount: 3,
       candidates: [
-        { address: "서울 강남구 역삼동", rent: 1150, management: 120, otherFixed: 100, deposit: 5000, interior: 1800, moving: 150, restoration: 300, rights: 500, otherMove: 100, closedDays: 7 },
-        { address: "서울 성동구 성수동", rent: 1050, management: 100, otherFixed: 80, deposit: 4500, interior: 1600, moving: 150, restoration: 300, rights: 400, otherMove: 100, closedDays: 6 },
-        { address: "서울 마포구 망원동", rent: 980, management: 100, otherFixed: 70, deposit: 4000, interior: 1400, moving: 120, restoration: 250, rights: 300, otherMove: 80, closedDays: 5 }
+        { address: "서울 강남구 테헤란로 152", rent: 1150, management: 120, otherFixed: 100, deposit: 5000, interior: 1800, moving: 150, restoration: 300, rights: 500, otherMove: 100, closedDays: 7 },
+        { address: "서울 성동구 아차산로 100", rent: 1050, management: 100, otherFixed: 80, deposit: 4500, interior: 1600, moving: 150, restoration: 300, rights: 400, otherMove: 100, closedDays: 6 },
+        { address: "서울 마포구 월드컵로 76", rent: 980, management: 100, otherFixed: 70, deposit: 4000, interior: 1400, moving: 120, restoration: 250, rights: 300, otherMove: 80, closedDays: 5 }
       ],
       recoveryMonths: null
     };
@@ -80,16 +84,16 @@ export function scenario(n) {
   return {
     demoScenario: 2,
     current: {
-      address: "서울 마포구 연남동",
+      address: "서울 마포구 동교로 262",
       sales: 2800, variable: 980,
       rent: 800, labor: 250, mgmt: 150, fixed: 1200,
       cash: 1200, depositReturn: 2700, keyMoneyRecovery: 0
     },
     candidateCount: 3,
     candidates: [
-      { address: "서울 마포구 망원동", rent: 700, management: 90, otherFixed: 60, deposit: 3000, interior: 1200, moving: 120, restoration: 250, rights: 200, otherMove: 80, closedDays: 5 },
-      { address: "서울 관악구 봉천동", rent: 620, management: 80, otherFixed: 50, deposit: 2500, interior: 1100, moving: 100, restoration: 250, rights: 150, otherMove: 70, closedDays: 5 },
-      { address: "서울 은평구 응암동", rent: 580, management: 70, otherFixed: 50, deposit: 2000, interior: 1000, moving: 100, restoration: 220, rights: 100, otherMove: 60, closedDays: 4 }
+      { address: "서울 마포구 월드컵로 76", rent: 700, management: 90, otherFixed: 60, deposit: 3000, interior: 1200, moving: 120, restoration: 250, rights: 200, otherMove: 80, closedDays: 5 },
+      { address: "서울 관악구 남부순환로 1820", rent: 620, management: 80, otherFixed: 50, deposit: 2500, interior: 1100, moving: 100, restoration: 250, rights: 150, otherMove: 70, closedDays: 5 },
+      { address: "서울 은평구 응암로 175", rent: 580, management: 70, otherFixed: 50, deposit: 2000, interior: 1000, moving: 100, restoration: 220, rights: 100, otherMove: 60, closedDays: 4 }
     ],
     recoveryMonths: null
   };

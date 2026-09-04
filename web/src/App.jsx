@@ -11,6 +11,7 @@ import BranchCheck from "./onboarding/steps/BranchCheck.jsx";
 import Recovery from "./onboarding/steps/Recovery.jsx";
 import LoadingScreen from "./onboarding/steps/LoadingScreen.jsx";
 import { blankState, scenario, labels, toStayMovePayload } from "./onboarding/logic.js";
+import { verifyAddress } from "./onboarding/verifyAddress.js";
 import "./styles.css";
 import "./onboarding/onboarding.css";
 
@@ -233,10 +234,11 @@ export default function App() {
         return (
           <TextStep
             title="운영 중인 카페 위치를<br/>알려주세요."
-            sub="주소를 기준으로 현재 상권 데이터를 연결합니다."
+            sub="상권은 한 구에도 수십 개라, 도로명과 건물번호까지 있어야 어느 상권인지 정해집니다."
             value={data.current.address}
-            placeholder="예: 서울 마포구 연남동"
+            placeholder="예: 서울 마포구 양화로 45"
             prefillScenario={data.demoScenario}
+            verify={verifyAddress}
             onNext={v => {
               setData(d => ({ ...d, current: { ...d.current, address: v } }));
               push("sales");

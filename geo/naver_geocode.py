@@ -26,6 +26,47 @@ class GeocodeError(Exception):
     """지오코딩 실패(키 없음/네트워크/미매칭)."""
 
 
+#: 주소가 어느 단위까지 해석됐는지. 앞쪽일수록 넓다.
+#: 상권(TRDAR)은 한 변이 수백 m라, 구·동 단위 주소로는 어느 상권인지 정해지지 않는다.
+#: 예) "서울 송파구" → 구 중심점이 우연히 걸린 상권이 잡힌다.
+PRECISION_ORDER = ("none", "city", "district", "dong", "land", "road")
+
+#: 상권을 특정할 수 있다고 보는 최소 단위
+PRECISION_MIN_FOR_TRDAR = "land"
+
+
+def classify_precision(address_elements: list) -> str:
+    """NCP addressElements 로 주소 해석 단위를 판정한다.
+
+    문자열을 쪼개는 대신 NCP가 붙여 준 타입을 쓴다. "서울 송파구 올림픽로 300" 처럼
+    입력에 동이 없어도 NCP가 DONGMYUN 을 채워 주므로, 입력 토큰 수로는 판정할 수 없다.
+    """
+    types = set()
+    for element in address_elements or []:
+        if not element.get("longName"):
+            continue  # 타입만 있고 값이 빈 항목이 섞여 온다
+        types.update(element.get("types") or [])
+    if "BUILDING_NUMBER" in types:
+        return "road"
+    if "LAND_NUMBER" in types:
+        return "land"
+    if "DONGMYUN" in types:
+        return "dong"
+    if "SIGUGUN" in types:
+        return "district"
+    if "SIDO" in types:
+        return "city"
+    return "none"
+
+
+def precision_at_least(precision: str, minimum: str = PRECISION_MIN_FOR_TRDAR) -> bool:
+    """precision 이 minimum 이상으로 좁은지."""
+    try:
+        return PRECISION_ORDER.index(precision) >= PRECISION_ORDER.index(minimum)
+    except ValueError:
+        return False
+
+
 @dataclass
 class GeoPoint:
     lat: float            # 위도 (y)
@@ -33,6 +74,7 @@ class GeoPoint:
     road_address: str     # 도로명 주소
     jibun_address: str    # 지번 주소
     matched: bool = True  # 주소가 실제로 매칭됐는지
+    precision: str = "none"  # classify_precision 결과
 
 
 def _build_request(address: str, key_id: str, key: str) -> urllib.request.Request:
@@ -56,6 +98,7 @@ def parse_response(payload: dict) -> Optional[GeoPoint]:
         road_address=a.get("roadAddress", ""),
         jibun_address=a.get("jibunAddress", ""),
         matched=True,
+        precision=classify_precision(a.get("addressElements")),
     )
 
 

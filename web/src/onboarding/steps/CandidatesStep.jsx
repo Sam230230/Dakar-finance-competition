@@ -4,6 +4,7 @@ import QuestionLayout from "../components/QuestionLayout.jsx";
 import Prefill from "../components/Prefill.jsx";
 import InfoTooltip from "../components/InfoTooltip.jsx";
 import { emptyCandidate, monthly, money, labels } from "../logic.js";
+import { verifyAddress } from "../verifyAddress.js";
 
 const isFilled = c => (c.address || "").trim() !== "";
 
@@ -14,6 +15,13 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
   });
   // 한 번에 한 카드만 펼친다. 처음엔 모두 접힌 상태로 시작.
   const [openIndex, setOpenIndex] = useState(null);
+  // 후보 index → 주소 지적 문구
+  const [rejects, setRejects] = useState({});
+  const [checking, setChecking] = useState(false);
+  // "입력 완료"로 지금 확인 중인 카드 index. 카드마다 따로 눌리므로 하나만 잡아두면 된다.
+  const [verifying, setVerifying] = useState(null);
+  // 지적이 붙었을 때 그 카드의 주소 칸으로 커서를 되돌리기 위한 참조
+  const addrRefs = useRef({});
   // 포커스 모드(제목·형제 카드·하단 버튼 감춤) 대상.
   // openIndex와 따로 두는 이유: 두 변화를 같은 프레임에 일으키면 형제 카드가
   // display:none으로 사라지는 리플로우 때문에 브라우저가 아코디언 트랜지션의
@@ -38,6 +46,48 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
 
   function patch(i, key, value) {
     setList(l => l.map((c, idx) => (idx === i ? { ...c, [key]: value } : c)));
+    if (key === "address") setRejects(r => (r[i] ? { ...r, [i]: "" } : r));
+  }
+
+  // 채워진 후보 주소를 한꺼번에 확인한다. 서로 독립이라 동시에 던진다.
+  // 하나라도 걸리면 그 카드를 펴서 어디가 문제인지 바로 보이게 한다.
+  async function submit() {
+    if (checking) return;
+    const filledRows = list.map((c, i) => ({ c, i })).filter(({ c }) => isFilled(c));
+    setChecking(true);
+    const results = await Promise.all(filledRows.map(({ c }) => verifyAddress(c.address)));
+    setChecking(false);
+
+    const next = {};
+    let firstBad = null;
+    results.forEach((result, n) => {
+      if (result.ok) return;
+      const { i } = filledRows[n];
+      next[i] = result.message;
+      if (firstBad === null) firstBad = i;
+    });
+    setRejects(next);
+    if (firstBad !== null) {
+      openCard(firstBad);
+      return;
+    }
+
+    onNext(
+      filledRows.map(({ c }) => ({
+        ...c,
+        address: c.address.trim(),
+        rent: Number(c.rent || 0),
+        management: Number(c.management || 0),
+        otherFixed: Number(c.otherFixed || 0),
+        deposit: Number(c.deposit || 0),
+        interior: Number(c.interior || 0),
+        moving: Number(c.moving || 0),
+        restoration: Number(c.restoration || 0),
+        rights: Number(c.rights || 0),
+        otherMove: Number(c.otherMove || 0),
+        closedDays: Number(c.closedDays || 0)
+      }))
+    );
   }
 
   function openCard(i) {
@@ -47,6 +97,31 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
     // rAF는 창이 가려지면 스로틀돼 아예 안 열릴 수 있어 타이머를 쓴다.
     const t = setTimeout(() => setOpenIndex(i), 0);
     timersRef.current.push(t);
+  }
+
+  // "입력 완료"는 카드를 닫기 전에 그 카드 주소만 확인한다.
+  // 세 곳을 다 채운 뒤 마지막에 몰아서 알려주면 되돌아가는 비용이 크다.
+  async function completeCard(i) {
+    if (verifying !== null) return;
+    setVerifying(i);
+    const result = await verifyAddress(list[i].address);
+    setVerifying(null);
+
+    if (!result.ok) {
+      setRejects(r => ({ ...r, [i]: result.message }));
+      // 카드는 닫지 않고 고칠 자리로 되돌린다
+      const input = addrRefs.current[i];
+      if (input) {
+        input.focus();
+        input.select();
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        input.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+      }
+      return;
+    }
+
+    setRejects(r => (r[i] ? { ...r, [i]: "" } : r));
+    closeCard(i);
   }
 
   function closeCard(i) {
@@ -197,10 +272,13 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
                     <div className="field">
                       <label>주소</label>
                       <input
+                        ref={el => { addrRefs.current[i] = el; }}
                         value={c.address || ""}
                         onChange={e => patch(i, "address", e.target.value)}
-                        placeholder="예: 서울 성동구 성수동"
+                        placeholder="예: 서울 성동구 성수이로 22"
+                        aria-invalid={rejects[i] ? "true" : undefined}
                       />
+                      {rejects[i] ? <p className="field-reject" role="alert">{rejects[i]}</p> : null}
                     </div>
 
                     <div className="section-label">매달 반복되는 비용</div>
@@ -259,10 +337,10 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
                     <button
                       type="button"
                       className="cand-done"
-                      disabled={!filled}
-                      onClick={() => closeCard(i)}
+                      disabled={!filled || verifying === i}
+                      onClick={() => completeCard(i)}
                     >
-                      입력 완료
+                      {verifying === i ? "주소 확인 중…" : "입력 완료"}
                     </button>
                   </div>
                 </div>
@@ -284,29 +362,8 @@ export default function CandidatesStep({ candidates, prefillScenario, onNext }) 
       </div>
 
       <div className={"footer" + (restoring ? " is-returning" : "")} style={{ display: focus ? "none" : undefined }}>
-        <button
-          className="next"
-          disabled={!ready}
-          onClick={() =>
-            onNext(
-              list.filter(isFilled).map(c => ({
-                ...c,
-                address: c.address.trim(),
-                rent: Number(c.rent || 0),
-                management: Number(c.management || 0),
-                otherFixed: Number(c.otherFixed || 0),
-                deposit: Number(c.deposit || 0),
-                interior: Number(c.interior || 0),
-                moving: Number(c.moving || 0),
-                restoration: Number(c.restoration || 0),
-                rights: Number(c.rights || 0),
-                otherMove: Number(c.otherMove || 0),
-                closedDays: Number(c.closedDays || 0)
-              }))
-            )
-          }
-        >
-          다음
+        <button className="next" disabled={!ready || checking} onClick={submit}>
+          {checking ? "주소 확인 중…" : "다음"}
         </button>
       </div>
     </QuestionLayout>

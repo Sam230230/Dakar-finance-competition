@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from geo.naver_geocode import geocode, GeocodeError
+from geo.naver_geocode import geocode, GeocodeError, precision_at_least, PRECISION_MIN_FOR_TRDAR
 from geo.sanggwon_join import lookup_trdar, get_trdar_geometry
 from data_sources.sosangong import stores_in_radius, SosangongError
 from data_sources.seoul_market import lookup_metric, list_industries
@@ -252,13 +252,23 @@ DEMO_LOCATIONS = {
 }
 
 
-def _area_payload(*, address: str, lat: float, lng: float, road_address: Optional[str] = None):
+def _area_payload(*, address: str, lat: float, lng: float, road_address: Optional[str] = None,
+                  precision: str = "point"):
+    """좌표 → 상권 + 그 좌표가 상권을 특정할 만큼 정확한 주소에서 나왔는지.
+
+    precision 기본값이 "point" 인 것은 지도 클릭처럼 주소를 거치지 않은 호출 때문이다.
+    그 경우 좌표 자체가 사용자가 찍은 지점이라 주소 단위를 따질 필요가 없다.
+    """
     match = lookup_trdar(lat, lng)
     return {
         "address": address,
         "road_address": road_address or address,
         "lat": lat,
         "lng": lng,
+        "precision": precision,
+        # 상권 지표를 이 주소의 것으로 읽어도 되는지. 구·동 단위면 False.
+        "trdar_reliable": precision == "point" or precision_at_least(precision),
+        "precision_required": PRECISION_MIN_FOR_TRDAR,
         "matched": match.matched,
         "trdar_cd": match.trdar_cd,
         "trdar_nm": match.trdar_nm,
@@ -300,7 +310,8 @@ def commercial_area(req: CommercialAreaRequest):
     """
     try:
         point = geocode(req.address)
-        return _area_payload(address=req.address, road_address=point.road_address, lat=point.lat, lng=point.lng)
+        return _area_payload(address=req.address, road_address=point.road_address,
+                             lat=point.lat, lng=point.lng, precision=point.precision)
     except GeocodeError as e:
         # 데모 주소는 REST Geocoding 키가 없어도 재현 가능하게 로컬 좌표로 폴백.
         normalized = " ".join(req.address.split())
