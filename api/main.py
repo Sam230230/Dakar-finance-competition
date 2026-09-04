@@ -29,13 +29,18 @@ import staymove
 
 app = FastAPI(title="상권 이전 컨설팅 API", version="1.0.0")
 
-# 개발 편의를 위한 관대한 CORS (배포 시 도메인 제한 권장)
+# CORS. 로컬에서는 열어 두고, 배포에서는 ALLOWED_ORIGINS 로 좁힌다.
+# 열어 둔 채 배포하면 누구나 이 API 를 자기 사이트에서 호출할 수 있다.
+#   ALLOWED_ORIGINS="https://staymove-web.onrender.com,https://example.com"
+_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins or ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if not _origins:
+    logging.warning("ALLOWED_ORIGINS 가 비어 모든 출처를 허용합니다. 배포 환경에서는 반드시 설정하세요.")
 
 
 @app.on_event("startup")
