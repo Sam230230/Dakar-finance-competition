@@ -23,7 +23,18 @@ GEOCODE_URL = "https://maps.apigw.ntruss.com/map-geocode/v2/geocode"
 
 
 class GeocodeError(Exception):
-    """지오코딩 실패(키 없음/네트워크/미매칭)."""
+    """지오코딩 실패.
+
+    원인을 kind 로 나눈다 — 사용자가 할 일이 완전히 다르기 때문이다.
+      "config"   서버에 키가 없다. 주소를 아무리 고쳐도 소용없다.
+      "upstream" NCP 응답 오류나 네트워크 실패. 마찬가지로 사용자 잘못이 아니다.
+      "address"  주소를 실제로 못 찾았다. 이때만 사용자가 고칠 수 있다.
+    이걸 뭉개면 ".env 가 없는 팀원"에게 "주소를 다시 확인하세요"라고 말하게 된다.
+    """
+
+    def __init__(self, message: str, kind: str = "address"):
+        super().__init__(message)
+        self.kind = kind
 
 
 #: 주소가 어느 단위까지 해석됐는지. 앞쪽일수록 넓다.
@@ -109,23 +120,24 @@ def geocode(address: str, key_id: Optional[str] = None, key: Optional[str] = Non
     key = key or os.getenv("NCP_APIGW_KEY")
     if not key_id or not key:
         raise GeocodeError(
-            "NCP Maps 키가 없습니다. .env 에 NCP_APIGW_KEY_ID / NCP_APIGW_KEY 를 설정하세요."
+            "NCP Maps 키가 없습니다. .env 에 NCP_APIGW_KEY_ID / NCP_APIGW_KEY 를 설정하세요.",
+            kind="config",
         )
     if not address or not address.strip():
-        raise GeocodeError("빈 주소입니다.")
+        raise GeocodeError("빈 주소입니다.", kind="address")
 
     req = _build_request(address, key_id, key)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:  # 401/429 등
-        raise GeocodeError(f"NCP 지오코딩 HTTP 오류 {e.code}: {e.reason}") from e
+        raise GeocodeError(f"NCP 지오코딩 HTTP 오류 {e.code}: {e.reason}", kind="upstream") from e
     except Exception as e:  # noqa: BLE001
-        raise GeocodeError(f"NCP 지오코딩 요청 실패: {e}") from e
+        raise GeocodeError(f"NCP 지오코딩 요청 실패: {e}", kind="upstream") from e
 
     point = parse_response(payload)
     if point is None:
-        raise GeocodeError(f"주소를 찾지 못했습니다: {address!r}")
+        raise GeocodeError(f"주소를 찾지 못했습니다: {address!r}", kind="address")
     return point
 
 

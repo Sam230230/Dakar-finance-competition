@@ -318,8 +318,18 @@ def commercial_area(req: CommercialAreaRequest):
         for loc in DEMO_LOCATIONS.values():
             if normalized == " ".join(loc["address"].split()):
                 return {**_area_payload(address=loc["address"], lat=loc["lat"], lng=loc["lng"]), "demo_fallback": True}
-        logging.warning("NAVER Geocoding 실패: %s", e)
-        raise HTTPException(status_code=400, detail="주소를 다시 확인해주세요.") from e
+        # 원인을 나눠야 한다. 키가 없어 실패한 걸 400 으로 내리면 프론트가 "주소를 찾지
+        # 못했어요"라고 말하고, .env 가 없는 팀원은 멀쩡한 주소를 계속 고치게 된다.
+        # 400 은 사용자가 고칠 수 있을 때만 쓴다. 서버 문제는 5xx 로 알리고,
+        # 프론트는 5xx 면 주소 검증을 건너뛰어 진행을 막지 않는다.
+        if getattr(e, "kind", "address") == "address":
+            logging.warning("주소를 찾지 못했습니다: %s", e)
+            raise HTTPException(status_code=400, detail="주소를 다시 확인해주세요.") from e
+        logging.error("지오코딩을 쓸 수 없습니다(%s): %s", getattr(e, "kind", "?"), e)
+        raise HTTPException(
+            status_code=503,
+            detail="주소 조회 서비스를 쓸 수 없어요. 서버의 NAVER 지도 키(.env) 설정을 확인해 주세요.",
+        ) from e
     except FileNotFoundError as e:
         logging.warning("상권 데이터 파일 없음: %s", e)
         raise HTTPException(status_code=503, detail="상권 데이터를 불러오지 못했습니다.") from e
